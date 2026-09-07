@@ -1,0 +1,169 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!--
+    Derived from Jehree's SPTClientModExamples template. The reference list is
+    the template's, unchanged. The only real edit is that the SPT install root
+    is detected instead of hard-coded - see the SPTRoot block below for why.
+  -->
+
+  <PropertyGroup>
+    <TargetFramework>netstandard2.1</TargetFramework>
+    <AssemblyName>SPTFreeAim</AssemblyName>
+    <RootNamespace>SPTFreeAim</RootNamespace>
+    <Nullable>disable</Nullable>
+    <Authors>kfmstr</Authors>
+    <Copyright></Copyright>
+    <AssemblyVersion>0.1.0</AssemblyVersion>
+    <FileVersion>$(AssemblyVersion)</FileVersion>
+    <Configurations>Debug;Release;Package</Configurations>
+    <Version>$(AssemblyVersion)</Version>
+    <LangVersion>latest</LangVersion>
+    <FileAlignment>512</FileAlignment>
+    <Deterministic>true</Deterministic>
+  </PropertyGroup>
+
+  <!--
+    SPT install root.
+
+    The upstream template hard-codes ..\..\ because it assumes the repo lives in
+    <SPT>\Development\<repo>\. This repo is cloned straight into
+    <SPT>\Development\ instead, which is one level shallower, so every one of
+    the template's hard-coded paths misses and you get several hundred
+    "type or namespace not found" errors with no obvious cause.
+
+    Probing three depths covers both layouts. Override on the command line with
+    /p:SPTRoot=C:\Path\To\SPT\  (trailing backslash required) if you move things.
+  -->
+  <PropertyGroup>
+    <_Probe1>$(MSBuildProjectDirectory)\..\</_Probe1>
+    <_Probe2>$(MSBuildProjectDirectory)\..\..\</_Probe2>
+    <_Probe3>$(MSBuildProjectDirectory)\..\..\..\</_Probe3>
+
+    <SPTRoot Condition="'$(SPTRoot)' == '' And Exists('$(_Probe1)EscapeFromTarkov_Data\Managed\Assembly-CSharp.dll')">$(_Probe1)</SPTRoot>
+    <SPTRoot Condition="'$(SPTRoot)' == '' And Exists('$(_Probe2)EscapeFromTarkov_Data\Managed\Assembly-CSharp.dll')">$(_Probe2)</SPTRoot>
+    <SPTRoot Condition="'$(SPTRoot)' == '' And Exists('$(_Probe3)EscapeFromTarkov_Data\Managed\Assembly-CSharp.dll')">$(_Probe3)</SPTRoot>
+
+    <Managed>$(SPTRoot)EscapeFromTarkov_Data\Managed\</Managed>
+    <BepDir>$(SPTRoot)BepInEx\</BepDir>
+  </PropertyGroup>
+
+  <PropertyGroup Condition=" '$(Configuration)|$(Platform)' == 'Debug|AnyCPU' ">
+    <DebugSymbols>true</DebugSymbols>
+    <DebugType>full</DebugType>
+    <Optimize>false</Optimize>
+    <OutputPath>bin\Debug\</OutputPath>
+    <DefineConstants>DEBUG;TRACE</DefineConstants>
+    <ErrorReport>prompt</ErrorReport>
+    <WarningLevel>4</WarningLevel>
+  </PropertyGroup>
+  <PropertyGroup Condition=" '$(Configuration)|$(Platform)' == 'Release|AnyCPU' ">
+    <DebugType>pdbonly</DebugType>
+    <Optimize>true</Optimize>
+    <OutputPath>bin\Release\</OutputPath>
+    <DefineConstants>TRACE</DefineConstants>
+    <ErrorReport>prompt</ErrorReport>
+    <WarningLevel>4</WarningLevel>
+  </PropertyGroup>
+
+  <!-- One clear message instead of several hundred "type not found" errors -->
+  <Target Name="VerifyGamePaths" BeforeTargets="BeforeBuild">
+    <Error Condition="'$(SPTRoot)' == ''"
+           Text="Could not find your SPT install. Looked for EscapeFromTarkov_Data\Managed\Assembly-CSharp.dll one, two and three folders above this project. Move the project under your SPT install, or build with /p:SPTRoot=C:\Your\SPT\Path\ (trailing backslash required)." />
+    <Warning Condition="'$(SPTRoot)' != '' And !Exists('$(BepDir)plugins\spt\spt-reflection.dll')"
+             Text="spt-reflection.dll not found under $(BepDir)plugins\spt\. The mod does not use it, but the reference is inherited from the template - remove that Reference line if the build complains." />
+    <Message Importance="high" Text="SPTFreeAim: SPT root = $(SPTRoot)" />
+  </Target>
+
+  <ItemGroup>
+    <!-- Spec harness: compiled separately, see tests\README.md -->
+    <Compile Remove="tests\**" />
+    <None Include="tests\**" />
+
+    <!--
+      The upstream template's example patch. Kept as reference, excluded from the
+      build: it lives in the SPTClientModExamples namespace and calls a
+      Plugin.LogSource that no longer exists, so compiling it would fail.
+      Delete the folder whenever you have finished reading it.
+    -->
+    <Compile Remove="ExamplePatches\**" />
+    <None Include="ExamplePatches\**" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Reference Include="PhysicsModule">
+      <HintPath>$(Managed)UnityEngine.PhysicsModule.dll</HintPath>
+    </Reference>
+    <Reference Include="0Harmony">
+      <HintPath>$(BepDir)core\0Harmony.dll</HintPath>
+    </Reference>
+    <Reference Include="spt-common">
+      <HintPath>$(BepDir)plugins\spt\spt-common.dll</HintPath>
+    </Reference>
+    <Reference Include="spt-reflection">
+      <HintPath>$(BepDir)plugins\spt\spt-reflection.dll</HintPath>
+    </Reference>
+    <Reference Include="Assembly-CSharp">
+      <HintPath>$(Managed)Assembly-CSharp.dll</HintPath>
+    </Reference>
+    <!--
+      NOT in the upstream template, and required: EFT.Player implements
+      Dissonance.IDissonancePlayer, so any method taking a Player parameter
+      fails to compile without it. See docs/07-FINDINGS.md F10.
+    -->
+    <Reference Include="DissonanceVoip">
+      <HintPath>$(Managed)DissonanceVoip.dll</HintPath>
+    </Reference>
+    <Reference Include="BepInEx">
+      <HintPath>$(BepDir)core\BepInEx.dll</HintPath>
+    </Reference>
+    <Reference Include="Comfort">
+      <HintPath>$(Managed)Comfort.dll</HintPath>
+    </Reference>
+    <Reference Include="Comfort.Unity, Version=1.0.0.4, Culture=neutral, processorArchitecture=MSIL">
+      <SpecificVersion>False</SpecificVersion>
+      <HintPath>$(Managed)Comfort.Unity.dll</HintPath>
+    </Reference>
+    <Reference Include="Newtonsoft.Json, Version=13.0.0.0, Culture=neutral, PublicKeyToken=30ad4fe6b2a6aeed, processorArchitecture=MSIL">
+      <SpecificVersion>False</SpecificVersion>
+      <HintPath>$(Managed)Newtonsoft.Json.dll</HintPath>
+    </Reference>
+    <Reference Include="Sirenix.Serialization, Version=1.0.0.0, Culture=neutral, processorArchitecture=MSIL">
+      <SpecificVersion>False</SpecificVersion>
+      <HintPath>$(Managed)Sirenix.Serialization.dll</HintPath>
+    </Reference>
+    <Reference Include="Unity.TextMeshPro, Version=0.0.0.0, Culture=neutral, processorArchitecture=MSIL">
+      <SpecificVersion>False</SpecificVersion>
+      <HintPath>$(Managed)Unity.TextMeshPro.dll</HintPath>
+    </Reference>
+    <Reference Include="UnityEngine">
+      <HintPath>$(Managed)UnityEngine.dll</HintPath>
+    </Reference>
+    <Reference Include="UnityEngine.AssetBundleModule, Version=0.0.0.0, Culture=neutral, processorArchitecture=MSIL">
+      <SpecificVersion>False</SpecificVersion>
+      <HintPath>$(Managed)UnityEngine.AssetBundleModule.dll</HintPath>
+    </Reference>
+    <Reference Include="UnityEngine.CoreModule">
+      <HintPath>$(Managed)UnityEngine.CoreModule.dll</HintPath>
+    </Reference>
+    <Reference Include="UnityEngine.IMGUIModule, Version=0.0.0.0, Culture=neutral, processorArchitecture=MSIL">
+      <SpecificVersion>False</SpecificVersion>
+      <HintPath>$(Managed)UnityEngine.IMGUIModule.dll</HintPath>
+    </Reference>
+    <Reference Include="UnityEngine.InputLegacyModule">
+      <HintPath>$(Managed)UnityEngine.InputLegacyModule.dll</HintPath>
+    </Reference>
+    <Reference Include="UnityEngine.TextRenderingModule, Version=0.0.0.0, Culture=neutral, processorArchitecture=MSIL">
+      <SpecificVersion>False</SpecificVersion>
+      <HintPath>$(Managed)UnityEngine.TextRenderingModule.dll</HintPath>
+    </Reference>
+    <Reference Include="UnityEngine.UI, Version=1.0.0.0, Culture=neutral, processorArchitecture=MSIL">
+      <SpecificVersion>False</SpecificVersion>
+      <HintPath>$(Managed)UnityEngine.UI.dll</HintPath>
+    </Reference>
+  </ItemGroup>
+
+  <Target Name="PostBuild" AfterTargets="PostBuildEvent">
+    <Exec Command="copy &quot;$(TargetPath)&quot; &quot;$(BepDir)plugins\$(TargetFileName)&quot;" />
+  </Target>
+
+</Project>

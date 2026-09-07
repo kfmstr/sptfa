@@ -1,0 +1,219 @@
+using System;
+using System.Reflection;
+using EFT;
+using EFT.Animations;
+using HarmonyLib;
+using SPTFreeAim.Compat;
+using SPTFreeAim.Core;
+using UnityEngine;
+
+namespace SPTFreeAim.Patches
+{
+    /// <summary>
+    /// Two patches, both manually applied so the target method names stay in
+    /// GameRefs. Declaring TYPES are referenced directly here - EFT.Player and
+    /// ProceduralWeaponAnimation are not obfuscated, only their members are.
+    ///
+    /// Patched with raw HarmonyX rather than SPT's ModulePatch. ModulePatch is a
+    /// thin wrapper over exactly this, and going direct means the mod has no
+    /// build- or run-time dependency on spt-reflection.dll, whose filename and
+    /// folder have moved between SPT versions.
+    /// </summary>
+    public static class FreeAimPatches
+    {
+        public static Player LocalPlayer;
+        public static ProceduralWeaponAnimation LocalPwa;
+
+        private static Harmony _harmony;
+        private static bool _warnedNoCamera;
+
+        public static void Apply(Harmony harmony)
+        {
+            _harmony = harmony;
+
+            harmony.Patch(
+                GameRefs.M_Player_VisualPass,
+                prefix: new HarmonyMethod(typeof(FreeAimPatches).GetMethod(
+                    nameof(TrackLocalPlayer), BindingFlags.Static | BindingFlags.NonPublic)));
+
+            harmony.Patch(
+                GameRefs.M_Pwa_AvoidObstacles,
+                postfix: new HarmonyMethod(typeof(FreeAimPatches).GetMethod(
+                    nameof(AfterAvoidObstacles), BindingFlags.Static | BindingFlags.NonPublic)));
+
+            Plugin.Log.LogInfo("FreeAimPatches applied.");
+        }
+
+        public static void Remove()
+        {
+            LocalPlayer = null;
+            LocalPwa = null;
+            if (_harmony != null) _harmony.UnpatchSelf();
+        }
+
+        // ------------------------------------------------------------------
+
+        private static void TrackLocalPlayer(Player __instance)
+        {
+            if (__instance == null || !__instance.IsYourPlayer) return;
+            if (!ReferenceEquals(LocalPlayer, __instance))
+            {
+                LocalPlayer = __instance;
+                Plugin.Instance.OnLocalPlayerChanged();
+            }
+            LocalPwa = __instance.ProceduralWeaponAnimation;
+        }
+
+        private static void AfterAvoidObstacles(ProceduralWeaponAnimation __instance)
+        {
+            if (!Plugin.Active) return;
+            if (LocalPlayer == null) return;
+            if (!ReferenceEquals(__instance, LocalPwa)) return;
+
+            try { Frame(__instance); }
+            catch (Exception e)
+            {
+                Plugin.Log.LogError("Free aim frame failed, disabling to avoid log spam: " + e);
+                Plugin.Instance.EmergencyDisable();
+            }
+        }
+
+        // ------------------------------------------------------------------
+
+        private static void Frame(ProceduralWeaponAnimation pwa)
+        {
+            Plugin p = Plugin.Instance;
+            FreeAimConfig cfg = p.Cfg;
+            FreeAimState st = p.State;
+
+            float dt = Time.deltaTime;
+
+            object mc = GameRefs.GetMovementContext(LocalPlayer);
+            if (mc == null) return;
+
+            Vector2 raw = new Vector2(GameRefs.GetYaw(mc), GameRefs.GetPitch(mc));
+
+            st.UpdateAimBlend(GameRefs.GetIsAiming(pwa), dt);
+            st.UpdateGate(p.Stance.WeaponReady || !cfg.StanceGateEnabled.Value, dt, cfg.GateSpeed.Value);
+
+            FreeAimState.Tuning tuning = cfg.Snapshot();
+            Vector2? writeBack = st.Step(raw, dt, tuning);
+
+            if (writeBack.HasValue)
+            {
+                // Note this writes Rotation, not Yaw/Pitch: those are read-only
+                // computed properties over it. See docs/07-FINDINGS.md F10.
+                if (!GameRefs.SetRotation(mc, writeBack.Value))
+                {
+                    Plugin.Log.LogWarning(
+                        "Intercept mode cannot drive MovementContext.Rotation. Falling back to " +
+                        "Compensate, which does not need it. See docs/05-OPEN-QUESTIONS.md Q4.");
+                    cfg.Mode.Value = DriveMode.Compensate;
+                    st.Reset(raw);
+                    return;
+                }
+            }
+
+            Vector2 applied = st.AppliedOffset(tuning);
+
+            if (tuning.Mode == DriveMode.Compensate)
+                ApplyCameraOffset(pwa, -applied);
+
+            ApplyWeaponOffset(pwa, applied, cfg);
+
+            if (cfg.LoweredPoseEnabled.Value && cfg.StanceGateEnabled.Value)
+                ApplyLoweredPose(pwa, p, dt);
+        }
+
+        /// <summary>
+        /// Compensate mode only. The game has already pointed the camera at the
+        /// gun bearing; rotate it back by the offset so the view lags. The weapon
+        /// hangs under the camera, so it comes with it - which is why the weapon
+        /// offset below is applied in the opposite sense and lands back on the
+        /// mouse bearing.
+        ///
+        /// IF THE CAMERA JITTERS OR SNAPS BACK: something later in the frame is
+        /// overwriting CameraTransform.localRotation - almost certainly the
+        /// camera-recoil step (GameRefs.M_Pwa_CameraRecoil, "method_19"). Move
+        /// this call into a postfix on that method instead. See
+        /// Patches/CameraApplyAlternative.cs.
+        /// </summary>
+        private static void ApplyCameraOffset(ProceduralWeaponAnimation pwa, Vector2 offset)
+        {
+            Transform cam = GameRefs.GetCameraTransform(pwa);
+            if (cam == null)
+            {
+                if (!_warnedNoCamera)
+                {
+                    _warnedNoCamera = true;
+                    Plugin.Log.LogError(
+                        "HandsContainer.CameraTransform not found - Compensate mode cannot move the " +
+                        "camera and will behave like Reactive. Find the camera transform in the " +
+                        "dnSpy export and add it to GameRefs.");
+                }
+                return;
+            }
+
+            // Yaw about local up, pitch about local right.
+            cam.localRotation = cam.localRotation * Quaternion.Euler(-offset.y, offset.x, 0f);
+        }
+
+        /// <summary>
+        /// The apply step, derived from lualeet/sptarkov-deadzone (MIT) via
+        /// SPT-Realism-Mod-Client's StanceController. Rotate the weapon root about
+        /// a pivot set back from the muzzle so the gun swings about roughly the
+        /// shoulder rather than spinning about its middle.
+        ///
+        /// The axis mapping below (pitch to X, yaw to Z) is lualeet's. It is not
+        /// obvious and it is not documented anywhere. If the weapon moves the wrong
+        /// way, use the Invert/Swap toggles in the F12 menu rather than editing
+        /// this - they exist precisely because this mapping has to be found by
+        /// experiment on each game version.
+        /// </summary>
+        private static void ApplyWeaponOffset(ProceduralWeaponAnimation pwa, Vector2 offset, FreeAimConfig cfg)
+        {
+            Transform root = GameRefs.GetWeaponRootAnim(pwa);
+            if (root == null) return;
+
+            float yaw = cfg.InvertYaw.Value ? -offset.x : offset.x;
+            float pitch = cfg.InvertPitch.Value ? -offset.y : offset.y;
+            if (cfg.SwapAxes.Value) { float t = yaw; yaw = pitch; pitch = t; }
+
+            float pivot = cfg.PivotDistance.Value;
+
+            GameRefs.LocalRotateAround(root, Vector3.up * pivot, new Vector3(pitch, 0f, yaw));
+
+            // Without this second call the pivot is left displaced and every
+            // offset applied after ours is wrong. lualeet's comment, and it is
+            // correct - do not remove it as dead code.
+            GameRefs.LocalRotateAround(root, Vector3.up * -pivot, Vector3.zero);
+        }
+
+        private static Vector3 _loweredPos;
+        private static Vector3 _loweredRot;
+
+        /// <summary>
+        /// Lowered-weapon pose. Structure and starting values from Realism's
+        /// DoPatrolStance - technique copied, no runtime dependency (CLAUDE.md).
+        /// </summary>
+        private static void ApplyLoweredPose(ProceduralWeaponAnimation pwa, Plugin p, float dt)
+        {
+            Transform root = GameRefs.GetWeaponRoot(pwa);
+            if (root == null) return;
+
+            bool down = !p.Stance.WeaponReady;
+            float speed = p.Cfg.LoweredLerpSpeed.Value * dt;
+
+            _loweredPos = Vector3.Lerp(_loweredPos, down ? p.Cfg.LoweredPos.Value : Vector3.zero, speed);
+            _loweredRot = Vector3.Lerp(_loweredRot, down ? p.Cfg.LoweredRot.Value : Vector3.zero, speed);
+
+            root.localPosition += _loweredPos;
+
+            Quaternion add = Quaternion.identity;
+            add.x = _loweredRot.x;
+            add.y = _loweredRot.y;
+            add.z = _loweredRot.z;
+            root.localRotation *= add;
+        }
+    }
+}
