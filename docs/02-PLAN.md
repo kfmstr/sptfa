@@ -30,8 +30,12 @@ Soft cone push + exponential spring toward the gun bearing + hard cap. See
 ### 4. Apply the offset to the weapon
 
 Reuse the existing pivot maths: rotate `HandsContainer.WeaponRootAnim` around a
-pivot set back from the muzzle, so the gun swings about roughly the shoulder
-rather than spinning about its middle.
+pivot point.
+
+> **Not the shoulder.** This step originally said "so the gun swings about
+> roughly the shoulder". Measured in Bodycam, the pivot is the FIRING HAND -
+> grip and trigger - and the buttstock swings away from the body. See
+> `07-FINDINGS.md` F12.1. The pivot is a Vector3, not a distance along one axis.
 
 Source: `reference/lualeet-DeadzonePatch.cs` (`ApplyDeadzone`), and the same maths
 already working on current SPT in `reference/realism-StanceController-excerpt.cs`
@@ -100,6 +104,7 @@ See `03-SETUP.md`. Ends with a dnSpy export of `Assembly-CSharp.dll`.
 - Hip fire: weapon takes its full recoil pattern; camera gets independent multi-axis shake, follow factor 0
 - Shouldered: weapon pattern narrows; camera follows at 0.5 to 0.7 amplitude, then the spring returns it
 - Tarkov already has a recoil system, so this is scaling and redirecting rather than writing one
+- The gun returns to its own origin after a burst, independently of the body (`07-FINDINGS.md` F12.3)
 - **Done when:** hip fire does not yank the view up, and shouldered fire makes the dot jump and settle
 
 ### 08. Edge cases and polish — 1 to 2 blocks

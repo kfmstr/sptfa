@@ -32,7 +32,7 @@ namespace SPTFreeAim
         public ConfigEntry<float> DisengageBoost;
 
         // ---- Pivot -------------------------------------------------------
-        public ConfigEntry<float> PivotDistance;
+        public ConfigEntry<Vector3> PivotOffset;
         public ConfigEntry<bool> ApplyWeaponOffset;
         public ConfigEntry<bool> ApplyCameraOffset;
         public ConfigEntry<bool> InvertYaw;
@@ -51,6 +51,9 @@ namespace SPTFreeAim
         public ConfigEntry<bool> SuspendOnSprint;
         public ConfigEntry<bool> SuspendOnAnimation;
         public ConfigEntry<bool> SuspendOnStationary;
+        public ConfigEntry<bool> ReadyPoseEnabled;
+        public ConfigEntry<Vector3> ReadyPos;
+        public ConfigEntry<Vector3> ReadyRot;
 
         // ---- Recoil ------------------------------------------------------
         public ConfigEntry<bool> DecoupleRecoil;
@@ -133,11 +136,18 @@ namespace SPTFreeAim
                 new AcceptableValueRange<float>(0f, 20f)));
 
             // -- pivot --
-            PivotDistance = cfg.Bind(S_PIVOT, "Pivot distance", 0.1f, new ConfigDescription(
-                "How far back along the weapon the rotation pivot sits, so the gun swings about " +
-                "roughly the shoulder rather than spinning about its middle. lualeet's default " +
-                "is 0.1; Realism's mounting uses 0.75. Tune by eye.",
-                new AcceptableValueRange<float>(-2f, 2f)));
+            PivotOffset = cfg.Bind(S_PIVOT, "Pivot offset", new Vector3(0f, 0.1f, 0f),
+                "Where the weapon hinges, as a point in the weapon root's local space.\n" +
+                "\n" +
+                "NOT the shoulder. docs/02-PLAN.md said to pivot about roughly the shoulder; " +
+                "measured in Bodycam the gun hinges about the FIRING HAND - grip and trigger - " +
+                "and the buttstock swings away from the body. See docs/07-FINDINGS.md F12.\n" +
+                "\n" +
+                "The default (0, 0.1, 0) is lualeet's original single-axis value, kept only so " +
+                "behaviour does not change until you tune it. To find the grip: set cone to 25 so " +
+                "the swing is obvious, then change one component at a time and watch which part of " +
+                "the weapon stays still. The component that stops the grip moving is the one you " +
+                "want. Realism's mounting pivot uses 0.75 on the same axis, for reference.");
 
             ApplyWeaponOffset = cfg.Bind(S_PIVOT, "Apply weapon offset", true,
                 "Rotate the weapon by the offset. Turn OFF to isolate a problem: with this off " +
@@ -190,6 +200,21 @@ namespace SPTFreeAim
 
             SuspendOnStationary = cfg.Bind(S_STANCE, "Suspend on mounted weapons", true,
                 "Mounted weapons and ladders, where the camera is not yours to move.");
+
+            ReadyPoseEnabled = cfg.Bind(S_STANCE, "Apply ready pose", false,
+                "[docs/07-FINDINGS.md F12] In Bodycam the weapon is NOT shouldered at rest: the " +
+                "firing hand is lowered, the gun is held low, and the buttstock sits behind the " +
+                "arm rather than in the shoulder pocket. Tarkov's weapon-up is already shouldered, " +
+                "so this offsets away from it. Off by default - the values below are zero, because " +
+                "they have to be found by eye and a guess would just be noise. Fades out as you aim.");
+
+            ReadyPos = cfg.Bind(S_STANCE, "Ready position offset", Vector3.zero,
+                "Position offset for the un-shouldered ready stance. Start small: Realism's lowered " +
+                "rifle pose uses (0.2, 0.025, 0.1), and the Bodycam ready is less extreme than that.");
+
+            ReadyRot = cfg.Bind(S_STANCE, "Ready rotation offset", Vector3.zero,
+                "Rotation offset for the ready stance. Realism's lowered rifle pose uses " +
+                "(0.05, -0.05, -0.5) for comparison.");
 
             // -- recoil --
             DecoupleRecoil = cfg.Bind(S_RECOIL, "Decouple recoil", false,

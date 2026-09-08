@@ -39,6 +39,7 @@ drags the gun behind it.
 | Nominal cone size | **Still to measure.** This is the key tuning number | `[unknown]` |
 | Hip vs shouldered | Identical coupling in both. The cone is **not** reduced when aiming | `[measured]` |
 | Optics | Red dot / holo always show the gun's true current aim, whenever the glass is visible | `[measured]` |
+| Pivot | The gun hinges about the FIRING HAND (grip and trigger), not the shoulder. The buttstock swings away from the body and the body catching up is what reseats it. `07-FINDINGS.md` F12.1 | `[measured]` |
 
 ### Pseudocode
 
@@ -98,6 +99,11 @@ then it always gets back where I look."*
 ---
 
 ## 4. Stance gating
+
+> **Correction, `07-FINDINGS.md` F12.2:** "gun up" below is NOT Tarkov's
+> shouldered idle. In Bodycam the ready position is a low ready - firing hand
+> lowered, buttstock behind the arm near the hip, not in the shoulder pocket.
+> The weapon is shouldered only when aiming.
 
 Two states.
 

@@ -157,7 +157,7 @@ namespace SPTFreeAim.Patches
 
             if (doCamera) { ApplyCameraOffset(pwa, -applied); GuardCamera.EndFrame(cameraTransform); }
             if (doWeapon) { ApplyWeaponOffset(pwa, applied, cfg); GuardWeapon.EndFrame(weaponRootAnim); }
-            if (doPose) { ApplyLoweredPose(pwa, p, dt); GuardPose.EndFrame(weaponRoot); }
+            if (doPose) { ApplyLoweredPose(pwa, p, dt); ApplyReadyPose(pwa, p, dt); GuardPose.EndFrame(weaponRoot); }
 
             ReportGuardsOnce();
         }
@@ -233,18 +233,28 @@ namespace SPTFreeAim.Patches
             float pitch = cfg.InvertPitch.Value ? -offset.y : offset.y;
             if (cfg.SwapAxes.Value) { float t = yaw; yaw = pitch; pitch = t; }
 
-            float pivot = cfg.PivotDistance.Value;
+            // The pivot is a full 3D point in the weapon root's local space, not a
+            // distance along one axis.
+            //
+            // docs/02-PLAN.md said to rotate "about roughly the shoulder". That is
+            // wrong: measured in Bodycam, the gun hinges about the FIRING HAND -
+            // the grip and trigger - and the buttstock swings away from the body.
+            // See docs/07-FINDINGS.md F12. A single up-axis distance cannot place
+            // a pivot at the grip, which is why this takes a Vector3.
+            Vector3 pivot = cfg.PivotOffset.Value;
 
-            GameRefs.LocalRotateAround(root, Vector3.up * pivot, new Vector3(pitch, 0f, yaw));
+            GameRefs.LocalRotateAround(root, pivot, new Vector3(pitch, 0f, yaw));
 
             // Without this second call the pivot is left displaced and every
             // offset applied after ours is wrong. lualeet's comment, and it is
             // correct - do not remove it as dead code.
-            GameRefs.LocalRotateAround(root, Vector3.up * -pivot, Vector3.zero);
+            GameRefs.LocalRotateAround(root, -pivot, Vector3.zero);
         }
 
         private static Vector3 _loweredPos;
         private static Vector3 _loweredRot;
+        private static Vector3 _readyPos;
+        private static Vector3 _readyRot;
 
         /// <summary>
         /// Lowered-weapon pose. Structure and starting values from Realism's
@@ -267,6 +277,42 @@ namespace SPTFreeAim.Patches
             add.x = _loweredRot.x;
             add.y = _loweredRot.y;
             add.z = _loweredRot.z;
+            root.localRotation *= add;
+        }
+
+        /// <summary>
+        /// The ready stance, as measured in Bodycam: the weapon is NOT shouldered
+        /// at rest. The firing hand is lowered, the gun is held low, and the
+        /// buttstock sits behind the arm rather than in the shoulder pocket.
+        /// Shouldering happens when you aim, and takes a moment.
+        ///
+        /// Tarkov's default "weapon up" is already shouldered, so reproducing the
+        /// Bodycam ready position means offsetting away from it. Off by default
+        /// (zero offsets) because the right values have to be found by eye and a
+        /// guess here would just be noise - see docs/07-FINDINGS.md F12.
+        ///
+        /// Fades out as you aim, so aiming down sights is unaffected.
+        /// </summary>
+        private static void ApplyReadyPose(ProceduralWeaponAnimation pwa, Plugin p, float dt)
+        {
+            if (!p.Cfg.ReadyPoseEnabled.Value) return;
+
+            Transform root = GameRefs.GetWeaponRoot(pwa);
+            if (root == null) return;
+
+            // Only while the weapon is up, and blended out by aiming.
+            float weight = p.State.Gate * (1f - p.State.AimBlend);
+            float speed = p.Cfg.LoweredLerpSpeed.Value * dt;
+
+            _readyPos = Vector3.Lerp(_readyPos, p.Cfg.ReadyPos.Value * weight, speed);
+            _readyRot = Vector3.Lerp(_readyRot, p.Cfg.ReadyRot.Value * weight, speed);
+
+            root.localPosition += _readyPos;
+
+            Quaternion add = Quaternion.identity;
+            add.x = _readyRot.x;
+            add.y = _readyRot.y;
+            add.z = _readyRot.z;
             root.localRotation *= add;
         }
     }

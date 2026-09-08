@@ -488,3 +488,93 @@ when it is the mechanic being backwards.
 Matching what a mechanic looks like is not matching what it does. When the spec
 is a statement about causation, only a test that can distinguish causation
 counts, and no amount of reasoning about the rendered image is that test.
+
+---
+
+## F12. Four corrections from playing it side by side with Bodycam
+
+Owner observations, September 2026, comparing the first working build against
+Bodycam directly. `[measured]` in the sense used by `docs/01-SPEC.md`: observed
+in Bodycam, not inferred.
+
+### F12.1 — The pivot is the FIRING HAND, not the shoulder
+
+`docs/02-PLAN.md` says to rotate the weapon
+
+> around a pivot set back from the muzzle, so the gun swings about roughly the
+> shoulder rather than spinning about its middle.
+
+Wrong. Owner's words:
+
+> *"the center of rotation is not the shoulder, it is the closest hand on the
+> trigger and hand grip. So the buttstock is misplaced from the shoulder, so it
+> takes some time for the body to catch up and place the gun on the shoulder."*
+
+The gun hinges about the grip and trigger hand. The **buttstock swings away from
+the body**, and the body catching up is what brings the stock back to the
+shoulder. That is a different motion from a shoulder-pivot: with a shoulder
+pivot the stock stays put and the muzzle sweeps; with a grip pivot the whole
+weapon rotates about a point near your hands and the stock travels.
+
+This also explains the *purpose* of the body catching up, which the spec never
+articulated: it is not just visual convergence, it is the body reseating the
+weapon into the shoulder.
+
+**Consequence:** the pivot cannot be a distance along one axis. `PivotDistance`
+(float, along local up) is replaced by `PivotOffset` (Vector3), so the pivot can
+be placed at the grip. Default unchanged for now — the real value has to be
+found by eye.
+
+### F12.2 — The ready stance is not shouldered
+
+> *"when the player holds the gun, buttstock is not on the shoulder, the hand is
+> down and holding the gun with the right hand lowered, and buttstock is going
+> behind it between the arm and the hip."*
+
+Bodycam's default weapon-up is a **low ready**: firing hand lowered, buttstock
+tucked behind the arm near the hip. Not Tarkov's shouldered idle.
+
+This matters more than it looks. `docs/01-SPEC.md` section 4 defines two states,
+"gun down" and "gun up", and treats gun-up as normal Tarkov. It is not — and
+much of the felt difference between the two games may come from this rather than
+from the aiming model.
+
+Added as an optional ready pose, off by default and blended out by aiming.
+Values are zero until measured; guessing them would be noise.
+
+Note this sits next to section 5, "shouldering animation — OUT OF SCOPE for v1".
+A static ready pose is cheap; the *transition* into the shoulder is the
+expensive animation work that stays out of scope. Worth keeping the line
+between them clear.
+
+### F12.3 — Recoil returns the gun to its own origin
+
+> *"when shooting from that position gun is kinda leaving its own life going up,
+> and player is trying to control it while body stays on the same stance and
+> then after spray gun gets back to its original position."*
+
+Consistent with `01-SPEC.md` section 3 (hip fire: the weapon takes the pattern,
+the body does not follow), and adds one thing the spec did not state: **after
+the burst the gun returns to where it started**, independent of the body, which
+has not moved. Step 07 needs a return-to-origin, not just a reduced follow
+factor.
+
+### F12.4 — The gun runs too fast; the body is right
+
+> *"gun runs too fast, the body movements are okay"*
+
+The body spring (k = 5, ~1s convergence) is right — that value was measured, and
+it holds up. The gun opening the offset too readily points at the cone or the
+push factor, both of which are guesses:
+
+- cone 10° is the `[unknown]` from Q1, never measured
+- push 0.5 was derived to satisfy the flick behaviour (F3), not measured
+
+Tune the cone first, since it is the one the spec singles out as deciding
+between subtle and disorienting.
+
+### Status
+
+F12.1 is implemented (pivot is now a Vector3). F12.2 is implemented but inert
+until values are set. F12.3 is not implemented and belongs to step 07. F12.4 is
+tuning.
