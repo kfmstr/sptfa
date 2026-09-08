@@ -130,7 +130,12 @@ behaviour, not as a push factor of 1.
 
 ---
 
-## F4. The step 03 feasibility gate can probably be sidestepped entirely
+## F4. CORRECTED — Compensate is not equivalent, and is not the target feel
+
+> **This finding was wrong in an important way and is corrected below. The
+> correction is F11. Read that first.**
+
+## F4 (as originally written). The step 03 feasibility gate can probably be sidestepped entirely
 
 `docs/02-PLAN.md` step 03 is budgeted at 2–4 blocks and framed as the gate the
 whole design hangs on: intercept the mouse delta before it reaches
@@ -422,3 +427,64 @@ Metadata says a member exists. It does not say the write is honoured at runtime,
 that our hook runs at the right point in the frame, or that shots follow the
 barrel. `docs/08-RECON.md` session 1 still has to be run in a raid — it is just
 much shorter now.
+
+
+---
+
+## F11. Compensate moves the body, not the view — F4 was wrong
+
+Corrects F4. Found by playing it, which is the only way it could have been
+found.
+
+### What F4 claimed
+
+That Compensate mode "produces the same coupling without intercepting
+anything", differing only in that "the character's movement bearing tracks the
+gun rather than the view, so strafing while offset is skewed".
+
+### What is actually true
+
+In Compensate mode the game's `MovementContext.Rotation` is left alone, tracking
+the mouse 1:1. **That value is the body bearing.** So the body turns instantly
+with the mouse. The mod then rotates the rendered camera back by the offset.
+
+The gun-to-view angle on screen comes out right. The causation does not. The
+body leads and the view is pointed off it — which is the exact inverse of D4,
+the measured finding the entire project rests on:
+
+> Bodycam: mouse points the gun 1:1, a spring pulls the camera around to meet
+> the gun.
+
+Playing it, the mod reads as "I turn, and the gun follows me". That is not a
+tuning problem or a sign error. It is what Compensate does.
+
+### Why the mistake happened
+
+F4 reasoned about what appears on screen — the angle between gun and view —
+and treated matching that as matching the mechanic. It is not the same thing.
+The spec's claim is about **which bearing is authoritative and which one
+chases**, and Compensate inverts that while leaving the on-screen angle intact.
+
+Describing the cost as "movement direction skews" compounded it: that framing
+makes it sound like a minor artefact of an otherwise faithful reproduction,
+when it is the mechanic being backwards.
+
+### What changes
+
+- **Intercept is the default.** It is the real mechanic: the mouse drives a gun
+  bearing nothing else can see, and the lagging body bearing is written into the
+  game, so the body genuinely trails.
+- **Intercept is confirmed available**, which the original plan doubted. See
+  F10.1: `MovementContext.Rotation` is public and settable, and `SetRotation`
+  exists. The startup log reports `body bearing drivable (Intercept possible)`.
+- **Compensate stays as a fallback**, honestly labelled, for the case where
+  Intercept writes do not hold. It is not the target feel.
+- The step 03 effort saving in F7 no longer applies the way F4 claimed. Step 03
+  is cheap because the write target turned out to be `Rotation` and is
+  confirmed writable — not because it could be skipped.
+
+### The lesson worth keeping
+
+Matching what a mechanic looks like is not matching what it does. When the spec
+is a statement about causation, only a test that can distinguish causation
+counts, and no amount of reasoning about the rendered image is that test.

@@ -59,16 +59,17 @@ is recoverable; that one can add weeks. Do it in the first session.
 Set in F12. The drive loop is identical in all of them; only how the offset
 reaches the screen differs.
 
-**Compensate** *(default)* — no input interception. The game's own yaw/pitch is
-treated as the gun bearing, which it already tracks 1:1 with no lag. The camera
-is rotated back by the offset and the weapon forward by it. Gets the spec's
-coupling without answering any dnSpy question. Costs: your movement direction
-tracks the gun rather than the view, so strafing while offset is skewed.
+**Intercept** *(default)* — the real mechanic. The mouse drives a gun bearing
+nothing else can see; the lagging body bearing is what gets written into the
+game. The body genuinely trails the gun, which is what `docs/04-DECISIONS.md` D4
+describes. Writes `MovementContext.Rotation` (not `Yaw`/`.Pitch` — those are
+read-only computed properties over it). Press F10 to confirm the write holds.
 
-**Intercept** — the design in `docs/02-PLAN.md`. Reads the bearing the game just
-wrote, derives the mouse delta, runs the loop, writes the body bearing back. No
-movement skew. Needs `MovementContext.Yaw`/`.Pitch` writes to land and hold —
-press F10 to find out.
+**Compensate** — no interception. The game's bearing stays 1:1 with the mouse
+and only the rendered camera is rotated back. The gun-to-view angle on screen
+comes out right, but the **body still leads**, which is backwards from D4. It
+reads as "I turn and the gun follows me". A fallback for when Intercept writes
+do not hold, not the target feel. See `docs/07-FINDINGS.md` F11.
 
 **Reactive** — the documented fallback (`docs/04-DECISIONS.md` D10). Camera
 leads, gun trails. Feels gun-heavy rather than body-heavy. Unlike lualeet's

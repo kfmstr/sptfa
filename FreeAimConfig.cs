@@ -69,10 +69,18 @@ namespace SPTFreeAim
             Enabled = cfg.Bind(S_MAIN, "Enabled", true,
                 "Master switch. Bind a key below so you can A/B the feel instantly.");
 
-            Mode = cfg.Bind(S_MAIN, "Drive mode", DriveMode.Compensate, new ConfigDescription(
-                "Compensate: no input interception needed. Start here.\n" +
-                "Intercept: the planned design. Needs MovementContext.Yaw/.Pitch writes to land - test with the write probe first.\n" +
-                "Reactive: fallback, camera leads and the gun trails.\n" +
+            Mode = cfg.Bind(S_MAIN, "Drive mode", DriveMode.Intercept, new ConfigDescription(
+                "Intercept: THE REAL MECHANIC, and the default. The mouse drives a gun bearing " +
+                "nothing else can see, and the lagging body bearing is what gets written into the " +
+                "game. The body genuinely trails the gun. Needs MovementContext.Rotation writes to " +
+                "hold - the startup log says whether they can.\n" +
+                "\n" +
+                "Compensate: no interception. The game's bearing stays 1:1 with the mouse and only " +
+                "the rendered camera is rotated back. Produces the same gun-to-view angle on screen, " +
+                "but the BODY still leads - which is backwards from docs/04-DECISIONS.md D4. Useful " +
+                "as a fallback if Intercept writes do not hold, not as the target feel.\n" +
+                "\n" +
+                "Reactive: camera leads, gun trails. The documented fallback, D10.\n" +
                 "Disabled: resolve and log only."));
 
             ToggleKey = cfg.Bind(S_MAIN, "Master toggle key",

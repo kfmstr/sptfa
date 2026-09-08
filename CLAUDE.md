@@ -64,6 +64,9 @@ and the F10 probe answers whether Intercept is available in about a minute. See
 - **Verify, do not assume, that shots follow the barrel.** Rotating the weapon
   model does not automatically move the bullet. This is an explicit test step.
 - **Everything user-facing goes in the BepInEx F12 config menu.**
+- **Intercept is the mode that implements the mechanic.** Compensate only
+  rotates the rendered camera; the body still leads, which is backwards from D4.
+  Matching the on-screen angle is not matching the causation. F11.
 - **Push factor stays below 1.0.** At 1.0 the soft cone becomes a hard clamp.
   See `docs/07-FINDINGS.md` F3.
 - **Drive the body bearing through `MovementContext.Rotation`, never `Yaw`/`Pitch`.**
