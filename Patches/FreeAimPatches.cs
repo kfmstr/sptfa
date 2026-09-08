@@ -24,6 +24,13 @@ namespace SPTFreeAim.Patches
         public static Player LocalPlayer;
         public static ProceduralWeaponAnimation LocalPwa;
 
+        // Every transform we touch is modified relative to its current value, so
+        // each needs a guard or the frames stack. See Compat/TransformGuard.cs.
+        private static readonly TransformGuard GuardWeapon = new TransformGuard("WeaponRootAnim");
+        private static readonly TransformGuard GuardCamera = new TransformGuard("CameraTransform");
+        private static readonly TransformGuard GuardPose = new TransformGuard("WeaponRoot");
+        private static bool _guardsReported;
+
         private static Harmony _harmony;
         private static bool _warnedNoCamera;
 
@@ -42,6 +49,22 @@ namespace SPTFreeAim.Patches
                     nameof(AfterAvoidObstacles), BindingFlags.Static | BindingFlags.NonPublic)));
 
             Plugin.Log.LogInfo("FreeAimPatches applied.");
+        }
+
+        private static void ReleaseAll(ProceduralWeaponAnimation pwa)
+        {
+            GuardWeapon.Release(GameRefs.GetWeaponRootAnim(pwa));
+            GuardCamera.Release(GameRefs.GetCameraTransform(pwa));
+            GuardPose.Release(GameRefs.GetWeaponRoot(pwa));
+        }
+
+        /// <summary>Called when the local player changes, so no stale base survives a raid.</summary>
+        public static void ForgetGuards()
+        {
+            GuardWeapon.Forget();
+            GuardCamera.Forget();
+            GuardPose.Forget();
+            _guardsReported = false;
         }
 
         public static void Remove()
@@ -66,9 +89,12 @@ namespace SPTFreeAim.Patches
 
         private static void AfterAvoidObstacles(ProceduralWeaponAnimation __instance)
         {
-            if (!Plugin.Active) return;
             if (LocalPlayer == null) return;
             if (!ReferenceEquals(__instance, LocalPwa)) return;
+
+            // Switched off mid-raid: hand the transforms back rather than leaving
+            // the weapon wherever our last frame put it.
+            if (!Plugin.Active) { ReleaseAll(__instance); return; }
 
             try { Frame(__instance); }
             catch (Exception e)
@@ -116,13 +142,41 @@ namespace SPTFreeAim.Patches
 
             Vector2 applied = st.AppliedOffset(tuning);
 
-            if (tuning.Mode == DriveMode.Compensate)
-                ApplyCameraOffset(pwa, -applied);
+            Transform weaponRootAnim = GameRefs.GetWeaponRootAnim(pwa);
+            Transform cameraTransform = GameRefs.GetCameraTransform(pwa);
+            Transform weaponRoot = GameRefs.GetWeaponRoot(pwa);
 
-            ApplyWeaponOffset(pwa, applied, cfg);
+            bool doCamera = tuning.Mode == DriveMode.Compensate && cfg.ApplyCameraOffset.Value;
+            bool doWeapon = cfg.ApplyWeaponOffset.Value;
+            bool doPose = cfg.LoweredPoseEnabled.Value && cfg.StanceGateEnabled.Value;
 
-            if (cfg.LoweredPoseEnabled.Value && cfg.StanceGateEnabled.Value)
-                ApplyLoweredPose(pwa, p, dt);
+            // Undo last frame's work first, so what we apply is never applied twice.
+            if (doCamera) GuardCamera.BeginFrame(cameraTransform); else GuardCamera.Release(cameraTransform);
+            if (doWeapon) GuardWeapon.BeginFrame(weaponRootAnim); else GuardWeapon.Release(weaponRootAnim);
+            if (doPose) GuardPose.BeginFrame(weaponRoot); else GuardPose.Release(weaponRoot);
+
+            if (doCamera) { ApplyCameraOffset(pwa, -applied); GuardCamera.EndFrame(cameraTransform); }
+            if (doWeapon) { ApplyWeaponOffset(pwa, applied, cfg); GuardWeapon.EndFrame(weaponRootAnim); }
+            if (doPose) { ApplyLoweredPose(pwa, p, dt); GuardPose.EndFrame(weaponRoot); }
+
+            ReportGuardsOnce();
+        }
+
+        /// <summary>
+        /// Whether the game re-establishes these transforms each frame is the fact
+        /// that decides whether the guards are load-bearing or merely harmless.
+        /// It is cheap to observe and worth knowing, so log it once.
+        /// </summary>
+        private static void ReportGuardsOnce()
+        {
+            if (_guardsReported) return;
+            if (!GuardWeapon.Observed && !GuardCamera.Observed && !GuardPose.Observed) return;
+            _guardsReported = true;
+
+            Plugin.Log.LogInfo("Transform reset behaviour: "
+                + GuardWeapon.Describe() + " | "
+                + GuardCamera.Describe() + " | "
+                + GuardPose.Describe());
         }
 
         /// <summary>

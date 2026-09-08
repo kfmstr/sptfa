@@ -153,6 +153,7 @@ namespace SPTFreeAim
 
         public void OnLocalPlayerChanged()
         {
+            FreeAimPatches.ForgetGuards();
             ResetState();
             Log.LogInfo("Local player acquired. Free aim state reset.");
         }

@@ -33,6 +33,8 @@ namespace SPTFreeAim
 
         // ---- Pivot -------------------------------------------------------
         public ConfigEntry<float> PivotDistance;
+        public ConfigEntry<bool> ApplyWeaponOffset;
+        public ConfigEntry<bool> ApplyCameraOffset;
         public ConfigEntry<bool> InvertYaw;
         public ConfigEntry<bool> InvertPitch;
         public ConfigEntry<bool> SwapAxes;
@@ -128,6 +130,16 @@ namespace SPTFreeAim
                 "roughly the shoulder rather than spinning about its middle. lualeet's default " +
                 "is 0.1; Realism's mounting uses 0.75. Tune by eye.",
                 new AcceptableValueRange<float>(-2f, 2f)));
+
+            ApplyWeaponOffset = cfg.Bind(S_PIVOT, "Apply weapon offset", true,
+                "Rotate the weapon by the offset. Turn OFF to isolate a problem: with this off " +
+                "and the camera apply on, only the view moves, so you can tell which of the two " +
+                "is misbehaving.");
+
+            ApplyCameraOffset = cfg.Bind(S_PIVOT, "Apply camera offset", true,
+                "Compensate mode only: rotate the camera back by the offset. Turn OFF and the " +
+                "mod behaves like Reactive - the gun trails the view instead of leading it - " +
+                "which is a useful A/B when something looks wrong.");
 
             InvertYaw = cfg.Bind(S_PIVOT, "Invert yaw", false,
                 "Flip if the weapon swings the wrong way horizontally. Expect to need one of these.");
