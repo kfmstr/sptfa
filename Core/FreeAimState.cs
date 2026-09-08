@@ -97,6 +97,27 @@ namespace SPTFreeAim.Core
             MouseDelta = AngleMath.Delta(_lastRaw, raw);
             _lastRaw = raw;
 
+            // Free aim fully disengaged - gun down, sprinting, grenade, knife,
+            // reload. The mouse must drive the VIEW directly, exactly like
+            // unmodded Tarkov.
+            //
+            // Scaling the applied offset by the gate is not enough on its own:
+            // that only stops the weapon being rotated. The loop underneath keeps
+            // running, so the mouse still drives a gun bearing and the body still
+            // springs along behind it - a laggy view with no visible gun offset,
+            // which is the worst of both. Collapse the loop instead, and in
+            // Intercept mode write nothing so the game's own bearing stands.
+            //
+            // The transition into this state is already smoothed: the gate fades
+            // over ~0.25s and DisengageBoost accelerates the spring, so the offset
+            // is near zero by the time this branch takes over.
+            if (Gate <= 0.001f)
+            {
+                Gun = Body = raw;
+                Offset = Vector2.zero;
+                return null;
+            }
+
             // Gate 0 collapses the offset quickly rather than snapping, so lowering
             // the weapon does not teleport the view.
             float k = p.SpringK * (1f + (1f - Gate) * p.DisengageBoost);

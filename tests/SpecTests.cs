@@ -148,6 +148,43 @@ public static class SpecTests
         Check("gate off suppresses the applied offset", after < 0.01f && before > 1f,
               string.Format("{0:F2} -> {1:F4} deg", before, after));
 
+        // -- disengaged pass-through (gun down / sprint / knife / grenade) --
+        Console.WriteLine();
+        Console.WriteLine("=== disengaged pass-through ===");
+        {
+            var st = Turn(DriveMode.Intercept, 200f, 0.5f, tw);
+            // Capture before stepping: Step() mutates st, and reading the offset
+            // afterwards would report a value the assertion never saw.
+            float engagedOffset = st.Offset.magnitude;
+            bool engagedWrites = st.Step(st.Body, DT, Tune(DriveMode.Intercept)).HasValue;
+            Check("engaged: offset is open and Intercept writes the body",
+                  engagedOffset > 1f && engagedWrites,
+                  string.Format("offset {0:F2} deg, writes={1}", engagedOffset, engagedWrites));
+
+            for (int i = 0; i < 240; i++) st.UpdateGate(false, DT, 4f);   // gun goes down
+
+            var ti = Tune(DriveMode.Intercept);
+            Vector2 raw = st.Body;
+            Vector2? wrote = null;
+            for (int i = 0; i < 30; i++) { raw = new Vector2(raw.x + 300f * DT, raw.y); wrote = st.Step(raw, DT, ti); }
+
+            Check("disengaged: nothing is written back, so the game's bearing stands",
+                  !wrote.HasValue, wrote.HasValue ? "still writing" : "no write");
+            Check("disengaged: no offset builds while looking around",
+                  st.Offset.magnitude < 0.001f,
+                  string.Format("offset {0:F4} deg", st.Offset.magnitude));
+            Check("disengaged: view tracks the mouse 1:1",
+                  Math.Abs(AngleMath.Delta(st.Body, raw).magnitude) < 0.001f,
+                  string.Format("body-vs-raw {0:F4} deg", AngleMath.Delta(st.Body, raw).magnitude));
+
+            // and it re-engages cleanly
+            for (int i = 0; i < 240; i++) st.UpdateGate(true, DT, 4f);
+            var re = st.Step(new Vector2(raw.x + 2f, raw.y), DT, ti);
+            Check("re-engages without a jump",
+                  re.HasValue && st.Offset.magnitude < 5f,
+                  string.Format("offset {0:F2} deg on the frame after re-engaging", st.Offset.magnitude));
+        }
+
         // -- aim coupling (Q2) -------------------------------------------
         var aimT = Tune(DriveMode.Compensate);
         aimT.AimCoupling = 0.25f;

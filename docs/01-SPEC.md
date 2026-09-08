@@ -111,6 +111,8 @@ Two states.
 - Free aim off
 - Camera behaves exactly like normal Tarkov
 - Mouse drives the body directly
+- Implemented as a full pass-through, not a scaled offset: the drive loop
+  collapses and Intercept writes nothing. See `07-FINDINGS.md` F13.
 
 **Gun up / ready**
 - Free aim on, full cone

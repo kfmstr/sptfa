@@ -578,3 +578,43 @@ between subtle and disorienting.
 F12.1 is implemented (pivot is now a Vector3). F12.2 is implemented but inert
 until values are set. F12.3 is not implemented and belongs to step 07. F12.4 is
 tuning.
+
+
+---
+
+## F13. The stance gate only scaled the offset; the loop kept running
+
+Owner, after the first successful pass:
+
+> *"when you run (gun is down) you should control where you look and not the
+> gun. So when I press sprint, or toggle sprint, it should be old way, same with
+> the nade and knife."*
+
+Correct, and it was a real gap rather than tuning.
+
+`Gate` was applied in `AppliedOffset` only - it scaled the rotation handed to the
+weapon. The drive loop underneath kept running regardless: the mouse still drove
+`Gun`, `Body` still sprang along behind it, and in Intercept mode `Body` was
+still what got written into the game.
+
+So with the weapon down you got a view that lagged your mouse with no visible
+gun offset to explain why - the worst of both. `docs/01-SPEC.md` section 4 says
+gun-down means "camera behaves exactly like normal Tarkov, mouse drives the body
+directly", and scaling the applied offset does not deliver that.
+
+**Fix:** when the gate reaches zero the loop collapses - `Gun = Body = raw`,
+offset zero, and in Intercept mode nothing is written back so the game's own
+bearing is authoritative. The transition is already smooth because the gate
+fades over ~0.25s and `DisengageBoost` accelerates the spring, so the offset is
+near zero before the pass-through takes over.
+
+Covered by four checks in `tests/`: nothing written while disengaged, no offset
+builds, the view tracks 1:1, and re-engaging does not jump.
+
+**Worth noting the shape of this bug.** The gate was implemented, the
+suspensions all resolved, and the HUD read `gate 0.00 DOWN (sprint)` - every
+visible indicator said it was working. What was missing was that the gate had
+been wired to the output stage and not to the mechanism. A test that only
+checked "does the applied offset go to zero" passed the whole time, which is
+exactly what `tests/` did before this. The added checks assert on what is
+written to the game, not just on what is applied to the weapon.
