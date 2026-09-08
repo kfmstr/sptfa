@@ -74,6 +74,18 @@
     <Message Importance="high" Text="SPTFreeAim: SPT root = $(SPTRoot)" />
   </Target>
 
+  <!--
+    Do not copy referenced assemblies into bin\. Without this the build drops a
+    38 MB copy of the whole game's managed folder next to the plugin, which is
+    slow, confusing, and a trap if anyone ever copies bin\ into plugins\.
+    Only SPTFreeAim.dll belongs in plugins.
+  -->
+  <ItemDefinitionGroup>
+    <Reference>
+      <Private>false</Private>
+    </Reference>
+  </ItemDefinitionGroup>
+
   <ItemGroup>
     <!-- Spec harness: compiled separately, see tests\README.md -->
     <Compile Remove="tests\**" />
