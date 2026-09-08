@@ -74,8 +74,10 @@ namespace SPTFreeAim
                 "Disabled: resolve and log only."));
 
             ToggleKey = cfg.Bind(S_MAIN, "Master toggle key",
-                new KeyboardShortcut(KeyCode.F7),
-                "Turns the whole effect on and off in raid, for side-by-side comparison.");
+                new KeyboardShortcut(KeyCode.F8),
+                "Turns the whole effect on and off in raid, for side-by-side comparison.\n" +
+                "Not F7: that is UnityExplorer's default UI toggle, and F12 is the BepInEx " +
+                "config menu. F8, F9 and F10 are free.");
 
             // -- coupling --
             ConeDegrees = cfg.Bind(S_COUPLING, "Cone size (deg)", 10f, new ConfigDescription(

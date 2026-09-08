@@ -85,7 +85,7 @@ namespace SPTFreeAim
             RecoilPatch.Apply(_harmony);
 
             Log.LogInfo(NAME + " " + VERSION + " loaded. Mode: " + Cfg.Mode.Value +
-                        ". F12 to configure, F9 for the HUD, F10 for the yaw write probe.");
+                        ". F12 to configure, F8 master toggle, F9 HUD, F10 write probe.");
         }
 
         private void Update()

@@ -46,7 +46,7 @@ is recoverable; that one can add weeks. Do it in the first session.
 
 | Key | Does |
 |---|---|
-| F7 | Master on/off, for instant A/B comparison |
+| F8 | Master on/off, for instant A/B comparison |
 | F9 | Debug HUD |
 | F10 | Yaw write probe — answers the feasibility gate (`docs/07-FINDINGS.md` F5) |
 | F12 | BepInEx config menu. Everything user-facing lives here |
