@@ -60,6 +60,24 @@ namespace SPTFreeAim.Core
         /// <summary>Mouse delta for the frame, derived from the bearing the game reported.</summary>
         public Vector2 MouseDelta;
 
+        /// <summary>
+        /// The weapon's own recoil, in degrees, riding on top of the player-driven
+        /// offset. docs/07-FINDINGS.md F12.3: the gun climbs on its own while the
+        /// body holds its stance, then returns to where it started.
+        ///
+        /// Deliberately kept OUT of the coupling maths. The body springs toward
+        /// the player-driven Gun bearing only, so recoil never drags the body
+        /// around - which is the whole point of the observation. It is added at
+        /// the apply step instead.
+        ///
+        /// The return-to-origin is Tarkov's own: this mirrors a value that already
+        /// decays to zero, so there is no second spring to tune or get wrong.
+        /// </summary>
+        public Vector2 RecoilOffset;
+
+        /// <summary>The raw Vector3 the game exposes, shown on the HUD so the axis mapping can be read off.</summary>
+        public Vector3 RecoilRaw;
+
         /// <summary>0 = free aim fully disengaged (gun down), 1 = fully engaged.</summary>
         public float Gate = 1f;
 
@@ -73,6 +91,7 @@ namespace SPTFreeAim.Core
         {
             Gun = Body = _lastRaw = bearing;
             Offset = Vector2.zero;
+            RecoilOffset = Vector2.zero;
             MouseDelta = Vector2.zero;
             _seeded = true;
         }
@@ -115,6 +134,7 @@ namespace SPTFreeAim.Core
             {
                 Gun = Body = raw;
                 Offset = Vector2.zero;
+                RecoilOffset = Vector2.zero;
                 return null;
             }
 
@@ -185,7 +205,15 @@ namespace SPTFreeAim.Core
         public Vector2 AppliedOffset(Tuning p)
         {
             float aimMul = 1f - ((1f - p.AimCoupling) * AimBlend);
-            return Offset * Gate * aimMul;
+
+            // The aim-coupling multiplier scales the player-driven offset only.
+            // Recoil is not a coupling choice - the gun really does climb when
+            // shouldered - so it is added afterwards, unscaled.
+            Vector2 total = Offset * aimMul + RecoilOffset;
+
+            // Cap the total, so recoil on top of a wide offset cannot exceed the
+            // limit the player-driven offset alone respects.
+            return AngleMath.ClampMagnitude(total, p.CapDegrees) * Gate;
         }
 
         public void UpdateAimBlend(bool isAiming, float dt)

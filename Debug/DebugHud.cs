@@ -56,6 +56,8 @@ namespace SPTFreeAim.Debugging
                 Row("offset", string.Format("{0,7:F1} {1,7:F1}   |{2:F1}|  {3}",
                         st.Offset.x, st.Offset.y, mag, Bar(mag, cfg.CapDegrees.Value))) +
                 Row("mouse delta", string.Format("{0,7:F2} {1,7:F2}", st.MouseDelta.x, st.MouseDelta.y)) +
+                Row("recoil raw xyz", string.Format("{0,6:F2} {1,6:F2} {2,6:F2}   -> gun {3,5:F1} {4,5:F1}",
+                        st.RecoilRaw.x, st.RecoilRaw.y, st.RecoilRaw.z, st.RecoilOffset.x, st.RecoilOffset.y)) +
                 "\n" +
                 Row("cone / cap", string.Format("{0:F1} / {1:F1} deg", cfg.ConeDegrees.Value, cfg.CapDegrees.Value)) +
                 Row("k / push", string.Format("{0:F1} / {1:F2}", cfg.SpringK.Value, cfg.PushFactor.Value)) +
@@ -67,8 +69,8 @@ namespace SPTFreeAim.Debugging
                 "\n" +
                 Row("probe (F10)", YawWriteProbe.LastResult);
 
-            GUI.Box(new Rect(10, 10, 470, 300), GUIContent.none, _boxStyle);
-            GUI.Label(new Rect(20, 18, 450, 284), "<b>SPT Free Aim</b>\n\n" + body, _style);
+            GUI.Box(new Rect(10, 10, 490, 318), GUIContent.none, _boxStyle);
+            GUI.Label(new Rect(20, 18, 470, 302), "<b>SPT Free Aim</b>\n\n" + body, _style);
         }
 
         private static string Row(string label, string value)

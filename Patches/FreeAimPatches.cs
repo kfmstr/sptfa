@@ -122,6 +122,20 @@ namespace SPTFreeAim.Patches
             st.UpdateAimBlend(GameRefs.GetIsAiming(pwa), dt);
             st.UpdateGate(p.Stance.WeaponReady || !cfg.StanceGateEnabled.Value, dt, cfg.GateSpeed.Value);
 
+            // The weapon's own recoil, routed to the gun bearing rather than the
+            // camera (docs/07-FINDINGS.md F12.3). Read before Step so the HUD and
+            // the apply step see the same frame's value.
+            st.RecoilRaw = GameRefs.GetHandRecoil(pwa);
+            if (cfg.RecoilMovesGun.Value)
+            {
+                float rYaw = st.RecoilRaw.y;
+                float rPitch = st.RecoilRaw.x;
+                if (cfg.RecoilSwapAxes.Value) { float t = rYaw; rYaw = rPitch; rPitch = t; }
+                Vector2 scale = cfg.RecoilGunScale.Value;
+                st.RecoilOffset = new Vector2(rYaw * scale.x, rPitch * scale.y);
+            }
+            else st.RecoilOffset = Vector2.zero;
+
             FreeAimState.Tuning tuning = cfg.Snapshot();
             Vector2? writeBack = st.Step(raw, dt, tuning);
 

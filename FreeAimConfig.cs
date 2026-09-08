@@ -59,6 +59,9 @@ namespace SPTFreeAim
         public ConfigEntry<bool> DecoupleRecoil;
         public ConfigEntry<float> HipCameraFollow;
         public ConfigEntry<float> AimCameraFollow;
+        public ConfigEntry<bool> RecoilMovesGun;
+        public ConfigEntry<Vector2> RecoilGunScale;
+        public ConfigEntry<bool> RecoilSwapAxes;
 
         // ---- Debug -------------------------------------------------------
         public ConfigEntry<bool> ShowHud;
@@ -208,13 +211,15 @@ namespace SPTFreeAim
                 "so this offsets away from it. Off by default - the values below are zero, because " +
                 "they have to be found by eye and a guess would just be noise. Fades out as you aim.");
 
-            ReadyPos = cfg.Bind(S_STANCE, "Ready position offset", Vector3.zero,
-                "Position offset for the un-shouldered ready stance. Start small: Realism's lowered " +
-                "rifle pose uses (0.2, 0.025, 0.1), and the Bodycam ready is less extreme than that.");
+            ReadyPos = cfg.Bind(S_STANCE, "Ready position offset", new Vector3(0.1f, 0.0125f, 0.05f),
+                "Position offset for the un-shouldered ready stance. Starting point only: half of " +
+                "Realism's lowered rifle pose (0.2, 0.025, 0.1), on the reasoning that a Bodycam " +
+                "low ready sits between shouldered and fully lowered. Tune by eye - the target is " +
+                "buttstock behind the arm near the hip, not in the shoulder pocket.");
 
-            ReadyRot = cfg.Bind(S_STANCE, "Ready rotation offset", Vector3.zero,
-                "Rotation offset for the ready stance. Realism's lowered rifle pose uses " +
-                "(0.05, -0.05, -0.5) for comparison.");
+            ReadyRot = cfg.Bind(S_STANCE, "Ready rotation offset", new Vector3(0.025f, -0.025f, -0.25f),
+                "Rotation offset for the ready stance. Same reasoning: half of Realism's lowered " +
+                "rifle pose (0.05, -0.05, -0.5).");
 
             // -- recoil --
             DecoupleRecoil = cfg.Bind(S_RECOIL, "Decouple recoil", false,
@@ -226,6 +231,23 @@ namespace SPTFreeAim
                 new AcceptableValueRange<float>(0f, 1f)));
             AimCameraFollow = cfg.Bind(S_RECOIL, "Shouldered camera follow", 0.6f, new ConfigDescription(
                 "[spec] 0.5-0.7 measured.", new AcceptableValueRange<float>(0f, 1f)));
+
+            RecoilMovesGun = cfg.Bind(S_RECOIL, "Recoil moves the gun", false,
+                "[docs/07-FINDINGS.md F12.3] Adds the weapon's own recoil to the GUN bearing, so " +
+                "the gun climbs while the body holds its stance, then returns to where it " +
+                "started. The rise and the return are Tarkov's own - this only routes them to the " +
+                "gun instead of the camera - so there is no second spring to tune.\n" +
+                "\n" +
+                "Off by default until the axis mapping is confirmed: watch the HUD's recoil row " +
+                "while firing to see which component moves, then set the scale below.");
+
+            RecoilGunScale = cfg.Bind(S_RECOIL, "Recoil to gun scale (yaw, pitch)", new Vector2(1f, 1f),
+                "How much of the weapon's recoil reaches the gun bearing. Negative flips the " +
+                "direction. Zero on an axis disables it. Start at (1, 1) and watch the HUD.");
+
+            RecoilSwapAxes = cfg.Bind(S_RECOIL, "Recoil swap axes", false,
+                "Flip if the recoil climbs sideways instead of up. The Vector3 the game exposes " +
+                "is a hand rotation, and which component is pitch was never verified.");
 
             // -- debug --
             ShowHud = cfg.Bind(S_DEBUG, "Show HUD", true,

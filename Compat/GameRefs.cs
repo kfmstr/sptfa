@@ -54,6 +54,24 @@ namespace SPTFreeAim.Compat
         private static readonly Member M_HandsContainer = new Member("PWA.HandsContainer", "HandsContainer");
         private static readonly Member M_IsAiming = new Member("PWA.IsAiming", "IsAiming");
 
+        // ---- The weapon's own recoil ---------------------------------------
+        // Tarkov already models recoil as a value that rises on a shot and decays
+        // back to zero (RecoilProcessBase has Current, Velocity, ReturnSpeed and
+        // Damping). So the "gun returns to its original position" half of
+        // docs/07-FINDINGS.md F12.3 is already built and already tuned by BSG -
+        // there is nothing to reimplement, only somewhere else to route it.
+        //
+        //   PWA.Shootingg (field, ShotEffector)
+        //     .CurrentRecoilEffect (property, IRecoilShotEffect)
+        //       .HandRotationRecoilEffect (property, RotationRecoilProcessBase)
+        //         .Current (field on RecoilProcessBase, Vector3)
+        private static readonly Member M_Shootingg = new Member("PWA.Shootingg", "Shootingg");
+        private static readonly Member M_CurrentRecoilEffect = new Member("ShotEffector.CurrentRecoilEffect", "CurrentRecoilEffect");
+        private static readonly Member M_HandRotationRecoil = new Member("IRecoilShotEffect.HandRotationRecoilEffect", "HandRotationRecoilEffect");
+        private static readonly Member M_RecoilCurrent = new Member("RecoilProcessBase.Current", "Current");
+        private static bool _recoilChainBound;
+        public static bool RecoilAvailable { get; private set; }
+
         // ---- HandsContainer (PlayerSpring) transforms -----------------------
         // All three are public FIELDS, not properties. See Compat/Member.cs.
         private static readonly Member M_WeaponRootAnim = new Member("HandsContainer.WeaponRootAnim", "WeaponRootAnim");
@@ -141,6 +159,11 @@ namespace SPTFreeAim.Compat
                     LastError = "HandsContainer.WeaponRootAnim not found - nothing to rotate";
                     return;
                 }
+
+                // The recoil chain is bound lazily: CurrentRecoilEffect is an
+                // interface, so the concrete type is only known once a weapon
+                // exists. Binding it here against the interface would miss.
+                M_Shootingg.Bind(T_ProceduralWeaponAnimation);
 
                 ResolveLocalRotateAround(asmCSharp);
 
@@ -305,6 +328,41 @@ namespace SPTFreeAim.Compat
         }
 
         public static bool GetIsAiming(object pwa) => M_IsAiming.Get(pwa, false);
+
+        /// <summary>
+        /// The weapon's current recoil rotation, in the game's own units. Rises
+        /// on a shot and decays back to zero by itself.
+        /// Returns zero when unavailable, so a missing member means "no recoil
+        /// influence" rather than a crash.
+        /// </summary>
+        public static Vector3 GetHandRecoil(object pwa)
+        {
+            object shoot = M_Shootingg.Get(pwa);
+            if (shoot == null) return Vector3.zero;
+
+            if (!_recoilChainBound)
+            {
+                M_CurrentRecoilEffect.Bind(shoot.GetType());
+                object eff0 = M_CurrentRecoilEffect.Get(shoot);
+                if (eff0 == null) return Vector3.zero;      // no weapon yet; try again next frame
+
+                M_HandRotationRecoil.Bind(eff0.GetType());
+                object hand0 = M_HandRotationRecoil.Get(eff0);
+                if (hand0 == null) return Vector3.zero;
+
+                M_RecoilCurrent.Bind(hand0.GetType());
+                _recoilChainBound = true;
+                RecoilAvailable = M_RecoilCurrent.Resolved;
+                Plugin.Log.LogInfo("Recoil chain: " + M_CurrentRecoilEffect.Describe()
+                    + " | " + M_HandRotationRecoil.Describe() + " | " + M_RecoilCurrent.Describe());
+            }
+
+            object eff = M_CurrentRecoilEffect.Get(shoot);
+            if (eff == null) return Vector3.zero;
+            object hand = M_HandRotationRecoil.Get(eff);
+            if (hand == null) return Vector3.zero;
+            return M_RecoilCurrent.Get(hand, Vector3.zero);
+        }
 
         public static object GetHandsContainer(object pwa) => M_HandsContainer.Get(pwa);
 

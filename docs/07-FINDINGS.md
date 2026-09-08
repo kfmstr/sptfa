@@ -575,9 +575,9 @@ between subtle and disorienting.
 
 ### Status
 
-F12.1 is implemented (pivot is now a Vector3). F12.2 is implemented but inert
-until values are set. F12.3 is not implemented and belongs to step 07. F12.4 is
-tuning.
+All four addressed. F12.1 implemented and CONFIRMED in game - the pivot was the
+fix. F12.2 implemented with starting values, opt-in. F12.3 implemented, see F14.
+F12.4 is tuning, in progress.
 
 
 ---
@@ -618,3 +618,70 @@ been wired to the output stage and not to the mechanism. A test that only
 checked "does the applied offset go to zero" passed the whole time, which is
 exactly what `tests/` did before this. The added checks assert on what is
 written to the game, not just on what is applied to the weapon.
+
+
+---
+
+## F14. Recoil already returns to origin - it only needed routing
+
+F12.3 asked for the gun to climb on its own while the body holds its stance, and
+to return to where it started afterwards. Half of that turned out to be free.
+
+`EFT.Animations.RecoilProcessBase` exposes, as public fields:
+
+```
+Vector3 Current       the recoil rotation right now
+Vector3 Velocity
+float   ReturnSpeed
+float   Damping
+bool    StableOn
+```
+
+reachable at
+`PWA.Shootingg.CurrentRecoilEffect.HandRotationRecoilEffect.Current`.
+
+Tarkov already models recoil as a value that rises on a shot and **decays back
+to zero by itself**. The return-to-origin exists and is BSG-tuned per weapon.
+There is nothing to reimplement.
+
+What was missing is where it goes. Stock Tarkov expresses much of that rise by
+dragging the camera up. F12.3 wants it expressed on the **gun**:
+
+- recoil is added to the gun bearing, so the muzzle climbs
+- the body springs toward the **player-driven** bearing only, so it holds its
+  stance and is never dragged by recoil
+- as the game's own recoil decays, the gun returns on its own
+
+So the implementation is a read and an addition, not a physics model. No second
+spring to fight BSG's, and it stays correct when weapon recoil stats change.
+
+### Deliberately outside the coupling maths
+
+`RecoilOffset` is added at the apply step, not inside the drive loop. If it fed
+the cone and push logic, firing would push the body around - the exact thing
+F12.3 says does not happen. The total is clamped to the hard cap so recoil
+stacked on a wide offset cannot exceed the limit the offset alone respects.
+
+The aim-coupling multiplier scales the player-driven offset only. Recoil is not
+a coupling preference - the gun really does climb when shouldered - so it is
+added unscaled.
+
+### Off by default, and why
+
+The value is a `Vector3` hand rotation and **which component is pitch was never
+verified**. Guessing would give recoil that climbs sideways. The HUD now shows
+the raw vector beside the derived gun offset, so one burst reads the mapping off
+directly: turn it on in F12, fire, watch which component moves.
+
+### Relationship to the camera-follow patch
+
+Two independent halves of step 07, and they compose:
+
+| | What it does |
+|---|---|
+| `RecoilPatch` (camera follow) | stops the camera being dragged up by the weapon |
+| Recoil-to-gun (this) | makes the gun climb, and return, on its own |
+
+The first alone gives a still camera and a gun that barely moves. The second
+alone gives a climbing gun with the camera still chasing it. The spec wants
+both.

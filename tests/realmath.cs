@@ -23,6 +23,14 @@ namespace UnityEngine
         public override string ToString() { return string.Format("({0:F2}, {1:F2})", x, y); }
     }
 
+    public struct Vector3
+    {
+        public float x, y, z;
+        public Vector3(float x, float y, float z) { this.x = x; this.y = y; this.z = z; }
+        public static Vector3 zero { get { return new Vector3(0, 0, 0); } }
+        public override string ToString() { return string.Format("({0:F2}, {1:F2}, {2:F2})", x, y, z); }
+    }
+
     public static class Mathf
     {
         public static float Exp(float f) { return (float)Math.Exp(f); }
