@@ -1,4 +1,5 @@
 using BepInEx.Configuration;
+using SPTFreeAim.Compat;
 using SPTFreeAim.Core;
 using UnityEngine;
 
@@ -32,6 +33,7 @@ namespace SPTFreeAim
         public ConfigEntry<float> DisengageBoost;
 
         // ---- Anchors (replaces the single pivot) --------------------------
+        public ConfigEntry<bool> UseMeasuredGeometry;
         public ConfigEntry<Vector3> AnchorGrip;
         public ConfigEntry<BoreAxis> BoreAxisChoice;
         public ConfigEntry<bool> BoreAxisInvert;
@@ -167,6 +169,18 @@ namespace SPTFreeAim
                 new AcceptableValueRange<float>(0f, 20f)));
 
             // -- anchors --
+            UseMeasuredGeometry = cfg.Bind(S_PIVOT, "Measure the weapon", true,
+                "Read the bore, grip and buttpad off the weapon in your hands instead of using the " +
+                "numbers below.\n" +
+                "\n" +
+                "Every EFT weapon carries two transforms that define its sight line, mod_align_rear " +
+                "and mod_align_front. Rear to front IS the bore, on this weapon, with these " +
+                "attachments. There is nothing to guess and nothing to re-tune per gun.\n" +
+                "\n" +
+                "Falls back per value, not all at once: a pistol has a real grip and sight line but " +
+                "no buttstock, so the stock distance below stands in for that one alone. The startup " +
+                "log and the HUD both say what was found. Turn this off only to override it by hand.");
+
             AnchorGrip = cfg.Bind(S_PIVOT, "Anchor: pistol grip", new Vector3(0.2f, 0.1f, 0f),
                 "The right hand on the pistol grip, as a point in the weapon root's local space. " +
                 "The braced contact: nearly still, ready to fight recoil at any moment. This is " +
@@ -491,13 +505,26 @@ namespace SPTFreeAim
         /// </summary>
         public WeaponAnchors AnchorSnapshot()
         {
+            bool measured = UseMeasuredGeometry.Value;
+
+            // Measured beats configured, per member, rather than all or nothing.
+            // A pistol has a real grip and a real sight line but no buttstock, and
+            // the right answer there is to use the two that exist and fall back
+            // only on the third.
+            bool useBore = measured && WeaponGeometry.HaveBore;
+            bool useGrip = measured && WeaponGeometry.HaveGrip;
+            bool useStock = measured && WeaponGeometry.HaveStock;
+
             return new WeaponAnchors
             {
-                Grip = AnchorGrip.Value,
-                Bore = WeaponAnchors.AxisVector(BoreAxisChoice.Value, BoreAxisInvert.Value),
+                Grip = useGrip ? WeaponGeometry.Grip : AnchorGrip.Value,
+                Bore = useBore ? WeaponGeometry.Bore
+                               : WeaponAnchors.AxisVector(BoreAxisChoice.Value, BoreAxisInvert.Value),
                 StockBehind = StockBehindGrip.Value,
                 LeftHandAhead = LeftHandAheadOfGrip.Value,
-                Leeway = AnchorLeeway.Value
+                Leeway = AnchorLeeway.Value,
+                StockMeasured = useStock,
+                MeasuredStock = WeaponGeometry.Stock
             };
         }
     }

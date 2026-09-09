@@ -61,6 +61,7 @@ namespace SPTFreeAim.Patches
         /// <summary>Called when the local player changes, so no stale base survives a raid.</summary>
         public static void ForgetGuards()
         {
+            WeaponGeometry.Forget();
             GuardWeapon.Forget();
             GuardCamera.Forget();
             GuardPose.Forget();
@@ -278,10 +279,31 @@ namespace SPTFreeAim.Patches
             // The blend is the aim blend, not a setting of its own. "If aiming,
             // the buttstock is always on the shoulder" is a rule rather than a
             // preference, so there is nothing here to tune.
+            WeaponGeometry.EnsureMeasured(root);
+
             WeaponAnchors anchors = cfg.AnchorSnapshot();
             Vector3 pivot = anchors.Pivot(p.State.AimBlend);
 
-            GameRefs.LocalRotateAround(root, pivot, new Vector3(pitch, 0f, yaw));
+            // Turn the weapon about axes ACROSS the barrel.
+            //
+            // This used to be Vector3(pitch, 0, yaw) - the weapon root's raw
+            // local X and Z, lualeet's mapping. That only aims the gun if those
+            // axes happen to lie across the bore, and on this build they do not:
+            // part of every mouse movement was rolling the weapon rather than
+            // pointing it, so the barrel kept its angle to the body and the whole
+            // gun slid around instead of hinging at the grip. F21.
+            //
+            // Built from the MEASURED bore, so it is correct on any weapon and
+            // there is no per-gun axis to find.
+            Vector3 right, up;
+            anchors.Frame(out right, out up);
+
+            Quaternion q = Quaternion.AngleAxis(yaw, up) * Quaternion.AngleAxis(-pitch, right);
+
+            // Handed to LocalRotateAround as euler because that is the signature
+            // the game's own TransformTools exposes. Quaternion.Euler(q.eulerAngles)
+            // reproduces q, so nothing is lost in the round trip.
+            GameRefs.LocalRotateAround(root, pivot, q.eulerAngles);
 
             // Without this second call the pivot is left displaced and every
             // offset applied after ours is wrong. lualeet's comment, and it is
@@ -309,8 +331,13 @@ namespace SPTFreeAim.Patches
             float roll = p.State.Roll * p.State.Gate;
             if (Mathf.Abs(roll) < 0.01f) return;
 
+            // About the measured bore, which is what "roll" means. Passing the
+            // bore vector scaled by the angle would only be a rotation if the
+            // bore were an axis-aligned unit vector, which it is not once it is
+            // measured off a real weapon.
             Vector3 rollPivot = anchors.LeftHand;
-            GameRefs.LocalRotateAround(root, rollPivot, anchors.Bore * roll);
+            Quaternion q = Quaternion.AngleAxis(roll, anchors.Bore);
+            GameRefs.LocalRotateAround(root, rollPivot, q.eulerAngles);
             GameRefs.LocalRotateAround(root, -rollPivot, Vector3.zero);
         }
 

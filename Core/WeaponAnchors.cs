@@ -63,8 +63,56 @@ namespace SPTFreeAim.Core
         /// </summary>
         public float Leeway;
 
+        /// <summary>
+        /// Set when the stock was measured off the weapon rather than derived
+        /// from the bore distance. A real buttpad beats an assumed one.
+        /// </summary>
+        public bool StockMeasured;
+        public Vector3 MeasuredStock;
+
         public Vector3 LeftHand { get { return Grip + Bore * LeftHandAhead; } }
-        public Vector3 Stock { get { return Grip - Bore * StockBehind; } }
+
+        public Vector3 Stock
+        {
+            get { return StockMeasured ? MeasuredStock : Grip - Bore * StockBehind; }
+        }
+
+        /// <summary>
+        /// The weapon's own right and up, perpendicular to the bore.
+        ///
+        /// This is the part that was missing, and it is why the gun changed
+        /// attitude without changing where it pointed (F21). Yaw and pitch have
+        /// to turn the weapon about axes ACROSS the barrel. Applying them to the
+        /// weapon root's raw local X and Z only lands on those axes by luck, and
+        /// on this build it did not: one of them ran along the bore, so part of
+        /// every mouse movement rolled the gun instead of aiming it.
+        ///
+        /// Built from the measured bore, so it is right on any weapon.
+        /// </summary>
+        public void Frame(out Vector3 right, out Vector3 up)
+        {
+            Vector3 f = Normalize(Bore);
+
+            // Any reference that is not parallel to the bore will do; the
+            // re-orthogonalisation below fixes whatever it was.
+            Vector3 hint = Mathf.Abs(f.y) > 0.9f ? new Vector3(0f, 0f, 1f) : new Vector3(0f, 1f, 0f);
+
+            right = Normalize(Cross(hint, f));
+            up = Normalize(Cross(f, right));
+        }
+
+        private static Vector3 Cross(Vector3 a, Vector3 b)
+        {
+            return new Vector3(a.y * b.z - a.z * b.y,
+                               a.z * b.x - a.x * b.z,
+                               a.x * b.y - a.y * b.x);
+        }
+
+        private static Vector3 Normalize(Vector3 v)
+        {
+            float m = v.magnitude;
+            return m < 0.0001f ? new Vector3(0f, 1f, 0f) : new Vector3(v.x / m, v.y / m, v.z / m);
+        }
 
         /// <summary>
         /// The pivot for this frame.

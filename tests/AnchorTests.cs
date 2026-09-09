@@ -92,6 +92,59 @@ public static class AnchorTests
               (Rifle(0f).Pivot(0f) - Rifle(0f).Grip).magnitude < 0.0001f, "exact");
 
         Console.WriteLine();
+        Console.WriteLine("=== yaw and pitch turn the gun ACROSS the barrel (F21) ===");
+
+        // The bug this replaces: yaw and pitch were applied to the weapon root's
+        // raw local X and Z. Those are only across the bore by luck. When one of
+        // them ran ALONG the bore, part of every mouse movement rolled the weapon
+        // instead of pointing it, so the barrel kept its angle to the body and
+        // the gun slid around rather than hinging.
+        //
+        // The necessary condition is that both axes are perpendicular to the
+        // bore, whatever the bore turns out to be. Checked here against a bore
+        // that is deliberately not axis-aligned, because an axis-aligned one
+        // would pass by accident.
+        foreach (var bore in new[] {
+            new Vector3(0f, 1f, 0f),
+            new Vector3(0f, 0f, 1f),
+            new Vector3(0.37f, 0.51f, -0.77f),
+            new Vector3(0f, 0.999f, 0.03f) })
+        {
+            var w = new WeaponAnchors { Grip = Vector3.zero, Bore = bore, StockBehind = 0.3f, LeftHandAhead = 0.3f };
+            Vector3 r, u;
+            w.Frame(out r, out u);
+
+            float bl = bore.magnitude;
+            float dr = (r.x * bore.x + r.y * bore.y + r.z * bore.z) / bl;
+            float du = (u.x * bore.x + u.y * bore.y + u.z * bore.z) / bl;
+            float dru = r.x * u.x + r.y * u.y + r.z * u.z;
+
+            Check("bore " + bore + ": both turn axes lie across the barrel",
+                  Math.Abs(dr) < 0.001f && Math.Abs(du) < 0.001f,
+                  string.Format("right.bore {0:F4}, up.bore {1:F4}", dr, du));
+            Check("   and they are perpendicular to each other, and unit length",
+                  Math.Abs(dru) < 0.001f && Math.Abs(r.magnitude - 1f) < 0.001f
+                                         && Math.Abs(u.magnitude - 1f) < 0.001f,
+                  string.Format("right.up {0:F4}, |r| {1:F3}, |u| {2:F3}", dru, r.magnitude, u.magnitude));
+        }
+
+        Console.WriteLine();
+        Console.WriteLine("=== a measured buttpad beats a derived one ===");
+
+        var derived = Rifle();
+        var measured = Rifle();
+        measured.StockMeasured = true;
+        measured.MeasuredStock = new Vector3(0.2f, -0.34f, 0.02f);
+
+        Check("without a measurement the stock is derived from the bore distance",
+              Math.Abs(derived.Stock.y - (-0.20f)) < 0.001f, derived.Stock.ToString());
+        Check("with one, the real buttpad is used instead",
+              (measured.Stock - measured.MeasuredStock).magnitude < 0.001f, measured.Stock.ToString());
+        Check("and that changes where a shouldered weapon pivots",
+              (measured.Pivot(1f) - derived.Pivot(1f)).magnitude > 0.01f,
+              string.Format("{0} vs {1}", measured.Pivot(1f), derived.Pivot(1f)));
+
+        Console.WriteLine();
         Console.WriteLine("=== the cone is not centred on the body ===");
 
         var st = new FreeAimState();

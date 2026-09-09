@@ -1132,3 +1132,84 @@ were unanswerable even though the underlying question was reasonable.
 When someone describes a physical system, the question worth asking is about the
 system. `AnchorGrip`, `StockBehindGrip` and `LeftHandAheadOfGrip` are named after
 what they are for the same reason.
+
+---
+
+## F21. The gun was never hinging, because nobody knew where the barrel was
+
+The owner, after F20 shipped:
+
+> right now gun is not rotating around my right arm when I am on low ready, the
+> line that goes throigh the barrel towards the end of the tip of the gun is
+> always perpendicular to axis of my body. the left hand should lead and give the
+> gun the angle left right and up and down, like the right hand is the fixed point
+
+F20 moved the pivot to the right place and the weapon still did not hinge about
+it. The pivot was not the problem. **The rotation axes were.**
+
+### The bug
+
+The apply step had been, since lualeet's original:
+
+```csharp
+GameRefs.LocalRotateAround(root, pivot, new Vector3(pitch, 0f, yaw));
+```
+
+Pitch on the weapon root's local X, yaw on its local Z. That aims the weapon only
+if X and Z happen to lie **across** the bore. Nothing guarantees that. On this
+build one of them ran along the barrel, so a share of every mouse movement was
+**rolling** the weapon rather than pointing it. The barrel kept its angle to the
+body, the whole gun translated around instead of swinging, and the pivot - now
+correctly at the grip - had nothing to hinge.
+
+The invert and swap toggles could not fix this. They flip signs and exchange two
+axes; they cannot produce an axis that is not in the set.
+
+### It did not need to be guessed
+
+I had told him to find the bore axis by experiment. That was the wrong answer,
+and the assembly says so plainly. `ProceduralWeaponAnimation` carries:
+
+```
+LINE_OF_SIGHT_P0 = "mod_align_rear"
+LINE_OF_SIGHT_P1 = "mod_align_front"
+```
+
+Two named transforms on every weapon, defining its sight line. Rear to front IS
+the bore, on this weapon, with these attachments, expressed in the weapon root's
+own local space by one `InverseTransformPoint` each. `mod_pistol_grip` and
+`mod_stock` are there too, so the grip and the buttpad are readable the same way.
+
+So `Compat/WeaponGeometry.cs` measures all three off the weapon in your hands,
+once per weapon change, and the turn axes are built from the measured bore:
+
+```csharp
+anchors.Frame(out right, out up);
+Quaternion q = Quaternion.AngleAxis(yaw, up) * Quaternion.AngleAxis(-pitch, right);
+```
+
+Both axes perpendicular to the barrel by construction, on any weapon, with no
+per-gun tuning and no axis to find.
+
+The fallback is per value rather than all-or-nothing: a pistol has a real grip
+and a real sight line but no buttstock, so the configured stock distance stands
+in for that one alone. The startup log and the HUD both name what was found.
+
+### The lesson worth keeping
+
+This is the third time an inherited axis convention has cost a day - F10, F19's
+cousin in the recoil mapping, and now this - and the first time I checked whether
+the game already knew the answer. It did, and it had been sitting in a string
+constant the whole time.
+
+The rule that keeps paying: **verify against the assembly before writing code.**
+I applied it to member names from the start and never thought to apply it to
+geometry. "Find it by experiment" is a reasonable thing to ask a user when the
+information genuinely is not available. It is a poor thing to ask when the
+information is a named transform on the object in question.
+
+Worth noticing too that the owner reported this as a physical observation - the
+barrel stays perpendicular to my body - and that description localised the bug
+faster than any log line would have. He has now been right about the mechanism
+three times running (F11, F12, F20), each time from watching rather than from
+reading code.

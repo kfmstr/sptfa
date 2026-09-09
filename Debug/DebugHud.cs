@@ -41,7 +41,8 @@ namespace SPTFreeAim.Debugging
             FreeAimState st = p.State;
             FreeAimConfig cfg = p.Cfg;
             float mag = st.Offset.magnitude;
-            Vector3 pivot = cfg.AnchorSnapshot().Pivot(st.AimBlend);
+            WeaponAnchors anchors = cfg.AnchorSnapshot();
+            Vector3 pivot = anchors.Pivot(st.AimBlend);
 
             TrackDecay(mag);
 
@@ -73,6 +74,11 @@ namespace SPTFreeAim.Debugging
                 Row("pivot", string.Format("{0,5:F2} {1,5:F2} {2,5:F2}   {3}",
                         pivot.x, pivot.y, pivot.z,
                         st.AimBlend > 0.5f ? "toward BUTTPAD" : "toward GRIP")) +
+                Row("geometry", WeaponGeometry.HaveBore
+                        ? "<color=#7fd1b9>measured</color>  bore " + Vec(anchors.Bore)
+                          + (WeaponGeometry.HaveGrip ? "  grip ok" : "  <color=#ffcc55>grip fallback</color>")
+                          + (WeaponGeometry.HaveStock ? "  stock ok" : "  stock derived")
+                        : "<color=#ffcc55>no sight line - using the configured axis</color>") +
                 Row("cone now", string.Format("{0:F1} deg  (set {1:F1}, inward x{2:F2})",
                         st.EffectiveCone(st.Offset, cfg.Snapshot()), cfg.ConeDegrees.Value,
                         cfg.InwardConeScale.Value)) +
@@ -89,6 +95,11 @@ namespace SPTFreeAim.Debugging
 
             GUI.Box(new Rect(10, 10, 560, 392), GUIContent.none, _boxStyle);
             GUI.Label(new Rect(20, 18, 540, 376), "<b>SPT Free Aim</b>\n\n" + body, _style);
+        }
+
+        private static string Vec(Vector3 v)
+        {
+            return string.Format("({0:F2},{1:F2},{2:F2})", v.x, v.y, v.z);
         }
 
         private static string Row(string label, string value)
