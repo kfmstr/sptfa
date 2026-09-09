@@ -759,3 +759,63 @@ under what terms, and it was published without anyone asking. `reference/` now
 carries a note per source. A file dropped into a repo "just for reference" is
 published the moment the repo is, and licences are cheaper to read before a
 push than after.
+
+---
+
+## F16. Realism's tuning constants were in our config defaults
+
+Caught by the owner asking whether anything of Realism's had been committed —
+a good question that a check answered better than an assurance would have.
+
+No Realism *code* was ever in the mod. But its numbers were:
+
+| Our setting | Value | Origin |
+|---|---|---|
+| `LoweredPos` | `(0.2, 0.025, 0.1)` | Realism's rifle patrol-stance position |
+| `LoweredRot` | `(0.05, -0.05, -0.5)` | Realism's rifle patrol-stance rotation |
+| `LoweredLerpSpeed` | `5.5` | Realism's lerp rate |
+| `ReadyPos` / `ReadyRot` | half the above | derived from them |
+
+They arrived in the handoff as `reference/realism-stance-key-values.cs` and were
+carried into `FreeAimConfig` defaults. F15 then removed the source files and
+`reference/REALISM-NOTES.md` said in as many words not to take their tuning
+constants — while the constants sat in the config the whole time. The note and
+the code disagreed, and the code was what shipped.
+
+### Two reasons to remove them, and the second is the real one
+
+**Licence.** Weak on its own. Short numeric values are closer to measurements
+than to creative expression, and a handful of floats is not the same order of
+problem as 3,343 lines of source. Not nothing, but not the argument.
+
+**They are the wrong numbers.** This is the one that matters. Realism's pose
+values are tuned against Realism's animation changes, ergonomics rewrite and
+recoil model. Ours has none of those. Carried across, they are not a head start
+— they are a number that looks like evidence and is not, sitting in the exact
+slot F12.2 says must be measured against Bodycam.
+
+That is worse than an empty field, because an empty field is honest about what
+nobody has measured yet, and a plausible-looking wrong number is not.
+
+### What changed
+
+All four are now zero, labelled UNMEASURED, and point at F12.2 for what to aim
+for. Zero means the pose does nothing until it is tuned, which is a truthful
+statement of what we know.
+
+The blend speed is now 6/s, chosen on its own reasoning — about a sixth of a
+second to settle, fast enough not to feel sluggish and slow enough to read as a
+movement rather than a snap — rather than inherited.
+
+**Existing installs are unaffected.** BepInEx writes config on first run and does
+not overwrite it when defaults change, so anything already tuned in
+`kfmstr.sptfreeaim.cfg` stays exactly as it is. This only changes what a fresh
+install starts from.
+
+### The pattern worth remembering
+
+F15 removed the obvious thing — the files — and declared the problem handled.
+The constants had already been copied *out* of those files into code, where
+deleting the source did not touch them. Removing a source does not remove what
+was taken from it, and the copy that matters is usually the one that has already
+been absorbed somewhere else.

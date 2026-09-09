@@ -228,7 +228,7 @@ namespace SPTFreeAim.Patches
 
         /// <summary>
         /// The apply step, derived from lualeet/sptarkov-deadzone (MIT) via
-        /// SPT-Realism-Mod-Client's StanceController. Rotate the weapon root about
+        /// lualeet's deadzone mod (MIT). Rotate the weapon root about
         /// a pivot set back from the muzzle so the gun swings about roughly the
         /// shoulder rather than spinning about its middle.
         ///
@@ -271,8 +271,9 @@ namespace SPTFreeAim.Patches
         private static Vector3 _readyRot;
 
         /// <summary>
-        /// Lowered-weapon pose. Structure and starting values from Realism's
-        /// DoPatrolStance - technique copied, no runtime dependency (CLAUDE.md).
+        /// Lowered-weapon pose. A position and rotation offset from the stock
+        /// weapon-up pose, lerped rather than snapped. The values are ours and
+        /// start at zero - see docs/07-FINDINGS.md F16.
         /// </summary>
         private static void ApplyLoweredPose(ProceduralWeaponAnimation pwa, Plugin p, float dt)
         {

@@ -150,7 +150,7 @@ namespace SPTFreeAim
                 "behaviour does not change until you tune it. To find the grip: set cone to 25 so " +
                 "the swing is obvious, then change one component at a time and watch which part of " +
                 "the weapon stays still. The component that stops the grip moving is the one you " +
-                "want. Realism's mounting pivot uses 0.75 on the same axis, for reference.");
+                "want.");
 
             ApplyWeaponOffset = cfg.Bind(S_PIVOT, "Apply weapon offset", true,
                 "Rotate the weapon by the offset. Turn OFF to isolate a problem: with this off " +
@@ -183,12 +183,17 @@ namespace SPTFreeAim
             LoweredPoseEnabled = cfg.Bind(S_STANCE, "Apply lowered pose", true,
                 "Visually lower the weapon in the down stance. Off leaves the pose alone and only " +
                 "gates free aim.");
-            LoweredPos = cfg.Bind(S_STANCE, "Lowered position offset", new Vector3(0.2f, 0.025f, 0.1f),
-                "Realism's rifle patrol-stance values, as a starting point.");
-            LoweredRot = cfg.Bind(S_STANCE, "Lowered rotation offset", new Vector3(0.05f, -0.05f, -0.5f),
-                "Realism's rifle patrol-stance values, as a starting point.");
-            LoweredLerpSpeed = cfg.Bind(S_STANCE, "Lowered pose lerp speed", 5.5f, new ConfigDescription(
-                "Realism uses 5.5/s.", new AcceptableValueRange<float>(0.5f, 20f)));
+            LoweredPos = cfg.Bind(S_STANCE, "Lowered position offset", Vector3.zero,
+                "Position offset for the weapon-down pose. UNMEASURED - zero means no visual " +
+                "lowering until you set it. Tune by eye against Bodycam; there is no source to " +
+                "copy a number from (docs/07-FINDINGS.md F16).");
+            LoweredRot = cfg.Bind(S_STANCE, "Lowered rotation offset", Vector3.zero,
+                "Rotation offset for the weapon-down pose. UNMEASURED - see above.");
+            LoweredLerpSpeed = cfg.Bind(S_STANCE, "Pose lerp speed", 6f, new ConfigDescription(
+                "How fast the weapon moves between stance poses, per second. 6/s is roughly a " +
+                "sixth of a second to settle - fast enough not to feel sluggish, slow enough to " +
+                "read as a movement rather than a snap.",
+                new AcceptableValueRange<float>(0.5f, 20f)));
 
             SuspendOnSprint = cfg.Bind(S_STANCE, "Suspend while sprinting", true,
                 "[spec section 4] Tarkov lowers the weapon natively when sprinting, so leaving " +
@@ -211,15 +216,14 @@ namespace SPTFreeAim
                 "so this offsets away from it. Off by default - the values below are zero, because " +
                 "they have to be found by eye and a guess would just be noise. Fades out as you aim.");
 
-            ReadyPos = cfg.Bind(S_STANCE, "Ready position offset", new Vector3(0.1f, 0.0125f, 0.05f),
-                "Position offset for the un-shouldered ready stance. Starting point only: half of " +
-                "Realism's lowered rifle pose (0.2, 0.025, 0.1), on the reasoning that a Bodycam " +
-                "low ready sits between shouldered and fully lowered. Tune by eye - the target is " +
-                "buttstock behind the arm near the hip, not in the shoulder pocket.");
+            ReadyPos = cfg.Bind(S_STANCE, "Ready position offset", Vector3.zero,
+                "Position offset for the un-shouldered low-ready stance (docs/07-FINDINGS.md " +
+                "F12.2). UNMEASURED. The target is buttstock behind the arm near the hip, firing " +
+                "hand lowered - not the shoulder pocket. Set cone to 25 to make the pose obvious " +
+                "while you tune, then put it back.");
 
-            ReadyRot = cfg.Bind(S_STANCE, "Ready rotation offset", new Vector3(0.025f, -0.025f, -0.25f),
-                "Rotation offset for the ready stance. Same reasoning: half of Realism's lowered " +
-                "rifle pose (0.05, -0.05, -0.5).");
+            ReadyRot = cfg.Bind(S_STANCE, "Ready rotation offset", Vector3.zero,
+                "Rotation offset for the low-ready stance. UNMEASURED - see above.");
 
             // -- recoil --
             DecoupleRecoil = cfg.Bind(S_RECOIL, "Decouple recoil", false,
