@@ -32,6 +32,8 @@ namespace SPTFreeAim
         public ConfigEntry<float> DisengageBoost;
 
         // ---- Pivot -------------------------------------------------------
+        public ConfigEntry<HingeMode> Hinge;
+        public ConfigEntry<Vector3> GripFromEye;
         public ConfigEntry<Vector3> PivotOffset;
         public ConfigEntry<bool> ApplyWeaponOffset;
         public ConfigEntry<bool> ApplyCameraOffset;
@@ -139,7 +141,34 @@ namespace SPTFreeAim
                 new AcceptableValueRange<float>(0f, 20f)));
 
             // -- pivot --
+            Hinge = cfg.Bind(S_PIVOT, "Hinge mode", HingeMode.AroundGrip, new ConfigDescription(
+                "AROUND GRIP is the physical one, and the default. The right hand holds the pistol " +
+                "grip, the mouse moves the support hand, the weapon is the rigid link between them, " +
+                "so it turns about the grip and the muzzle swings. Yaw about the world vertical, " +
+                "pitch about the camera's right - the axes those words actually mean.\n" +
+                "\n" +
+                "LEGACY EULER is what every build before this one did: hand (pitch, 0, yaw) to " +
+                "TransformTools.LocalRotateAround. That method does not take local euler angles - it " +
+                "runs the vector through parent.TransformDirection and InverseTransformDirection " +
+                "first, so which way the gun turns depends on how it sits relative to its parent, " +
+                "and part of the mouse movement can land along the barrel and roll it. Kept only for " +
+                "comparison. docs/07-FINDINGS.md F22."));
+
+            GripFromEye = cfg.Bind(S_PIVOT, "Grip from eye (right, up, fwd, m)", new Vector3(0.14f, -0.24f, 0.16f),
+                "AROUND GRIP mode. Where your firing hand is, measured from the camera in metres: " +
+                "how far to your RIGHT, how far UP (negative = below the eye), and how far FORWARD.\n" +
+                "\n" +
+                "These are numbers you can picture and check against your own body, which is the " +
+                "point - a point in the weapon root's local space is not, and tuning that by eye " +
+                "never converged. The defaults are roughly where a right-handed shooter's grip hand " +
+                "sits with the weapon up: a hand's width right, most of a forearm below the eye, and " +
+                "a little in front.\n" +
+                "\n" +
+                "Further from the eye means the muzzle sweeps a longer arc for the same angle. All " +
+                "three take negatives; flip the first one for a left-handed hold.");
+
             PivotOffset = cfg.Bind(S_PIVOT, "Pivot offset", new Vector3(0f, 0.1f, 0f),
+                "LEGACY EULER mode only, and ignored in Around Grip. " +
                 "Where the weapon hinges, as a point in the weapon root's local space.\n" +
                 "\n" +
                 "NOT the shoulder. docs/02-PLAN.md said to pivot about roughly the shoulder; " +

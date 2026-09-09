@@ -247,6 +247,12 @@ namespace SPTFreeAim.Patches
             float pitch = cfg.InvertPitch.Value ? -offset.y : offset.y;
             if (cfg.SwapAxes.Value) { float t = yaw; yaw = pitch; pitch = t; }
 
+            if (cfg.Hinge.Value == HingeMode.AroundGrip)
+            {
+                HingeAboutGrip(pwa, root, yaw, pitch, cfg);
+                return;
+            }
+
             // The pivot is a full 3D point in the weapon root's local space, not a
             // distance along one axis.
             //
@@ -269,6 +275,68 @@ namespace SPTFreeAim.Patches
         private static Vector3 _loweredRot;
         private static Vector3 _readyPos;
         private static Vector3 _readyRot;
+
+        /// <summary>
+        /// Turn the weapon about the firing hand, in world space.
+        ///
+        /// The physical description, and the one the owner has given three times:
+        /// the right hand holds the pistol grip, the mouse moves the support hand,
+        /// and the weapon is a rigid link between them - so it HINGES about the
+        /// grip and the muzzle swings.
+        ///
+        /// Two things make this different from what came before.
+        ///
+        /// First, the pivot is a world point, placed relative to the camera. The
+        /// grip is at a knowable place on your body - a little to the strong side,
+        /// well below the eye, a little forward of it - and those are numbers
+        /// anyone can picture and adjust. A point in the weapon root's local space
+        /// is not, which is why tuning it by eye never converged.
+        ///
+        /// Second, yaw turns about the world vertical and pitch about the camera's
+        /// own right vector. Those are the axes the words mean. Nothing is
+        /// reinterpreted through the weapon's local frame on the way there, so
+        /// pitch cannot go missing and no component of the mouse movement can land
+        /// along the barrel and roll the gun. See docs/07-FINDINGS.md F22 for what
+        /// the old call actually did.
+        /// </summary>
+        private static void HingeAboutGrip(ProceduralWeaponAnimation pwa, Transform root,
+                                           float yaw, float pitch, FreeAimConfig cfg)
+        {
+            Transform cam = GameRefs.GetCameraTransform(pwa);
+            if (cam == null)
+            {
+                if (!_warnedNoCamera)
+                {
+                    _warnedNoCamera = true;
+                    Plugin.Log.LogError(
+                        "HandsContainer.CameraTransform not found, so the grip pivot cannot be " +
+                        "placed. Falling back to the legacy rotation. See docs/08-RECON.md.");
+                }
+                cfg.Hinge.Value = HingeMode.LegacyEuler;
+                return;
+            }
+
+            // The grip, as a point in the world: offset from the camera in its own
+            // right / up / forward axes, in metres.
+            Vector3 pivot = cam.TransformPoint(cfg.GripFromEye.Value);
+
+            // Yaw about the world vertical, pitch about the camera's right. Using
+            // the camera's right rather than the world X keeps pitch square to
+            // where you are looking when you are turned away from the axes.
+            Quaternion q = Quaternion.AngleAxis(yaw, Vector3.up)
+                         * Quaternion.AngleAxis(-pitch, cam.right);
+
+            // A rigid body turned about a point: rotate the position around it,
+            // and rotate the orientation by the same amount. Nothing else - no
+            // second cancelling call, because nothing was displaced.
+            root.position = pivot + q * (root.position - pivot);
+            root.rotation = q * root.rotation;
+
+            LastPivot = pivot;
+        }
+
+        /// <summary>Last world pivot used, for the HUD.</summary>
+        public static Vector3 LastPivot;
 
         /// <summary>
         /// Lowered-weapon pose. A position and rotation offset from the stock

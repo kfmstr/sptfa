@@ -1235,3 +1235,94 @@ and weight-scaled ADS are off by default, and the reason given was that they
 change balance. The same reasoning applies to anything that alters the motion:
 new mechanics go in off, and get turned on one at a time by someone watching.
 
+
+---
+
+## F22. The rotation was never a rotation about a point
+
+After the rollback, the owner again:
+
+> The version you got me is already moving gun so that barrel of the gun in the
+> plane that is perpendicular to my body access, it never rotates, there is not
+> axis of rotation. what I needed is that front hand moves (left), and right hand
+> holds (with small leeway), so that the gun actually turn around the hand grip
+> following the left hand, and left hand is always bounded to the link between
+> its grip and the grip of the right hand and gun is solid object in between.
+
+So the rollback did not restore it either. Every version back to the first
+commit has the same apply step, and none of them ever did what he is describing.
+This is not a regression at all. It never worked.
+
+### What the call actually does
+
+Every build has ended in the same line, inherited from lualeet:
+
+```csharp
+GameRefs.LocalRotateAround(root, pivot, new Vector3(pitch, 0f, yaw));
+```
+
+I had assumed `TransformTools.LocalRotateAround(Transform, Vector3 center,
+Vector3 eulerRotation)` rotates by those euler angles about that centre, in the
+transform's local space. The IL says otherwise:
+
+```
+v = t.parent.TransformDirection(eulerRotation)     // the euler VECTOR, as a direction
+v = t.InverseTransformDirection(v)                 // re-expressed in t's local axes
+q = Quaternion.Euler(v)                            // only now are they angles
+localPosition += localRotation*center + q*(-center)
+localRotation *= q
+```
+
+The argument is carried through two frames as a **direction** before it is
+treated as **angles**. Which way the weapon turns therefore depends on how it
+happens to sit relative to its parent, and a component of every mouse movement
+can land along the barrel, where it rolls the gun instead of aiming it. When
+the pitch component maps onto the bore, pitch disappears entirely and the barrel
+stays in one plane - exactly the report.
+
+Nothing in the parameter names says this. Reading the IL is what says it, and I
+should have read it the first time I called into the game's code rather than the
+fourth.
+
+### What replaces it
+
+`HingeAboutGrip` does the plain thing, in world space:
+
+```csharp
+Vector3 pivot = cam.TransformPoint(cfg.GripFromEye.Value);
+Quaternion q = Quaternion.AngleAxis(yaw, Vector3.up)
+             * Quaternion.AngleAxis(-pitch, cam.right);
+root.position = pivot + q * (root.position - pivot);
+root.rotation = q * root.rotation;
+```
+
+A rigid body turned about a point. Yaw about the world vertical, pitch about the
+camera's right - the axes those two words mean. No frame juggling, so pitch
+cannot vanish, no component can land along the barrel, and there is no per-weapon
+axis to discover.
+
+There is also no second cancelling call. The old code needed one because
+`LocalRotateAround` displaced the transform as a side effect; this does not
+displace anything, so there is nothing to undo.
+
+### The pivot is expressed where a person can reason about it
+
+`Grip from eye` is right / up / forward from the camera, in metres. A hand's
+width to the right, most of a forearm below the eye, a little in front. Those are
+numbers you can check against your own body while sitting at the desk.
+
+The old `Pivot offset` was a point in the weapon root's local space, whose axes
+and scale nobody had established - which is why tuning it by eye never converged
+across three attempts, and why "find the bore axis by experiment" was a bad ask.
+
+### The lesson worth keeping
+
+The one call at the centre of the whole mechanic was the one piece of game code I
+never verified. I checked member names with Cecil from day one, wrote a finding
+about how much that discipline pays, and then took a three-argument method's
+behaviour on faith for the entire project because its parameters were named
+plainly and someone else's mod used it the same way.
+
+Inherited code is not verified code. `center` and `eulerRotation` are honest
+names for arguments that are not used the way those names imply, and no amount
+of staring at call sites would have shown it. The IL was forty lines.

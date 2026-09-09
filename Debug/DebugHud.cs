@@ -59,6 +59,11 @@ namespace SPTFreeAim.Debugging
                 Row("recoil raw xyz", string.Format("{0,6:F2} {1,6:F2} {2,6:F2}   -> gun {3,5:F1} {4,5:F1}",
                         st.RecoilRaw.x, st.RecoilRaw.y, st.RecoilRaw.z, st.RecoilOffset.x, st.RecoilOffset.y)) +
                 "\n" +
+                Row("hinge", cfg.Hinge.Value == HingeMode.AroundGrip
+                        ? string.Format("<color=#7fd1b9>AROUND GRIP</color>  pivot {0,6:F2} {1,6:F2} {2,6:F2}  (grip {3})",
+                              FreeAimPatches.LastPivot.x, FreeAimPatches.LastPivot.y,
+                              FreeAimPatches.LastPivot.z, cfg.GripFromEye.Value)
+                        : "<color=#ffcc55>LEGACY EULER</color>  (F22 - reinterprets the axes)") +
                 Row("cone / cap", string.Format("{0:F1} / {1:F1} deg", cfg.ConeDegrees.Value, cfg.CapDegrees.Value)) +
                 Row("k / push", string.Format("{0:F1} / {1:F2}", cfg.SpringK.Value, cfg.PushFactor.Value)) +
                 Row("gate", string.Format("{0:F2}   {1}", st.Gate, p.Stance)) +
