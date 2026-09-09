@@ -1,5 +1,6 @@
 using BepInEx.Configuration;
 using SPTFreeAim.Core;
+using SPTFreeAim.Patches;
 using UnityEngine;
 
 namespace SPTFreeAim
@@ -72,8 +73,13 @@ namespace SPTFreeAim
         public ConfigEntry<bool> ArmDrainEnabled;
         public ConfigEntry<float> ArmDrainRate;
         public ConfigEntry<float> ArmDrainAimedMultiplier;
-        public ConfigEntry<bool> BothEyesOpen;
-        public ConfigEntry<float> BothEyesStrength;
+        public ConfigEntry<bool> HousingTransparent;
+        public ConfigEntry<float> HousingAlpha;
+        public ConfigEntry<bool> HousingDoubled;
+        public ConfigEntry<float> HousingSeparation;
+        public ConfigEntry<bool> HousingHide;
+        public ConfigEntry<bool> KeepPeripheralVision;
+        public ConfigEntry<float> PeripheralStrength;
 
         // ---- Debug -------------------------------------------------------
         public ConfigEntry<bool> ShowHud;
@@ -334,7 +340,48 @@ namespace SPTFreeAim
                 "makes the ready position worth returning to. 1.0 removes the distinction.",
                 new AcceptableValueRange<float>(0.25f, 4f)));
 
-            BothEyesOpen = cfg.Bind(S_BODY, "Both eyes open", true,
+            HousingTransparent = cfg.Bind(S_BODY, "Optic housing: transparent", true,
+                "Your off eye sees past the body of the optic, so it reads as a ghost rather than a " +
+                "wall. Alpha on the housing materials.\n" +
+                "\n" +
+                "Combines with the doubling below - use either, both, or neither. The lens and the " +
+                "reticle are never touched by any of it.");
+
+            HousingAlpha = cfg.Bind(S_BODY, "Housing solidity", 0.3f, new ConfigDescription(
+                "How much of the housing is left. 0 is invisible, 1 is stock solid. 0.3 leaves " +
+                "enough to see where the sight is without it blocking the room behind it.",
+                new AcceptableValueRange<float>(0f, 1f)));
+
+            HousingDoubled = cfg.Bind(S_BODY, "Optic housing: doubled", true,
+                "The near-object blur, done the way your eyes actually do it.\n" +
+                "\n" +
+                "Two eyes see something this close from noticeably different angles, and the brain " +
+                "does not fuse it because it is focused past it on the target. So the housing " +
+                "appears TWICE, offset by the eye separation, each copy faint. That doubling is " +
+                "what near-object blur looks like to a shooter - it is the actual phenomenon rather " +
+                "than an approximation of it.\n" +
+                "\n" +
+                "A true camera depth-of-field would be the other way to do this. EFT's Prism post " +
+                "stack is not reachable from Assembly-CSharp, and it would blur the whole near " +
+                "field rather than the optic, so this is both the cheaper and the more targeted " +
+                "answer.");
+
+            HousingSeparation = cfg.Bind(S_BODY, "Eye separation (m)", 0.064f, new ConfigDescription(
+                "How far apart the two copies sit. 0.064 m is the average human interpupillary " +
+                "distance, which is the physically right answer - but the housing is much closer " +
+                "to your eye than a real optic is, so raise it if the doubling is too subtle to " +
+                "read, or lower it if it looks like two guns.",
+                new AcceptableValueRange<float>(0f, 0.2f)));
+
+            HousingHide = cfg.Bind(S_BODY, "Optic housing: hide instead", false,
+                "Blunt version: take the housing out entirely while aiming. Overrides the two " +
+                "above.\n" +
+                "\n" +
+                "Worth knowing about because it works on EVERY shader. The other two need a colour " +
+                "property to write and some of EFT's custom weapon shaders have none - when that " +
+                "happens the log says so and it falls back to this anyway.");
+
+            KeepPeripheralVision = cfg.Bind(S_BODY, "Keep peripheral vision when aiming", false,
                 "Keep your peripheral vision when the weapon comes into the shoulder.\n" +
                 "\n" +
                 "Tarkov narrows the field of view as you aim, which reads as closing one eye and " +
@@ -344,9 +391,13 @@ namespace SPTFreeAim
                 "and the reticle are exactly where the game puts them.\n" +
                 "\n" +
                 "It does mean no free zoom on magnified optics, because the narrowing is what that " +
-                "zoom IS. Back the strength off below if you want some of it back.");
+                "zoom IS. Back the strength off below if you want some of it back.\n" +
+                "\n" +
+                "SEPARATE from the optic housing setting above, and off by default: this one was " +
+                "my guess at what the thread asked for before I could read it, and the thread was " +
+                "about the housing. It is a reasonable thing to want on its own, so it stays.");
 
-            BothEyesStrength = cfg.Bind(S_BODY, "Both eyes strength", 1f, new ConfigDescription(
+            PeripheralStrength = cfg.Bind(S_BODY, "Peripheral vision strength", 1f, new ConfigDescription(
                 "1.0 removes the aim narrowing entirely - full peripheral vision, no tunnel. " +
                 "0.0 is stock Tarkov. 0.5 keeps half of it, which is a reasonable middle if " +
                 "losing the magnification on scopes bothers you.",

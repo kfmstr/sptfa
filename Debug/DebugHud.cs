@@ -72,10 +72,11 @@ namespace SPTFreeAim.Debugging
                                         cfg.ArmDrainAimedMultiplier.Value)
                                   : "<color=#ffcc55>off</color>")
                         : "<color=#ffcc55>hands pool not reached yet</color>") +
-                Row("both eyes", GameRefs.AimFovAvailable
-                        ? (cfg.BothEyesOpen.Value
+                Row("optic housing", HousingModes(cfg) + "  " + OpticHousing.LastReport) +
+                Row("peripheral", GameRefs.AimFovAvailable
+                        ? (cfg.KeepPeripheralVision.Value
                               ? string.Format("<color=#7fd1b9>open</color>  narrowing x{0:F2}  (stock delta {1:F1})",
-                                    1f - cfg.BothEyesStrength.Value * st.AimBlend, GameRefs.StockAimDeltaFov)
+                                    1f - cfg.PeripheralStrength.Value * st.AimBlend, GameRefs.StockAimDeltaFov)
                               : "stock Tarkov")
                         : "<color=#ffcc55>CameraManager.AimDeltaFov not found</color>") +
                 Row("parentage", FreeAimPatches.ParentageReport) +
@@ -91,6 +92,16 @@ namespace SPTFreeAim.Debugging
 
             GUI.Box(new Rect(10, 10, 490, 318), GUIContent.none, _boxStyle);
             GUI.Label(new Rect(20, 18, 470, 302), "<b>SPT Free Aim</b>\n\n" + body, _style);
+        }
+
+        private static string HousingModes(FreeAimConfig cfg)
+        {
+            if (cfg.HousingHide.Value) return "<color=#7fd1b9>HIDE</color>";
+            string s = "";
+            if (cfg.HousingTransparent.Value) s += "<color=#7fd1b9>transparent</color> ";
+            if (cfg.HousingDoubled.Value) s += "<color=#7fd1b9>doubled</color> ";
+            if (s.Length == 0) return "stock Tarkov";
+            return s + (OpticHousing.AlphaWorks ? "" : "<color=#ffcc55>(no alpha here)</color>");
         }
 
         private static string Row(string label, string value)

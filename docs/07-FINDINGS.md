@@ -1543,3 +1543,128 @@ feature is switched off or the mod releases, and `Remove()` releases it too.
 Each runs in its own try/catch and disables only itself on failure, per F19.
 Neither can take the coupling down, which is the only part of this mod that has
 to work.
+
+---
+
+## F26. Both eyes open is about the HOUSING, not the field of view
+
+The thread the owner linked, once he sent it as a PDF because Reddit is blocked
+for every tool I have:
+
+> Shooting with both eyes open should make the housing on your optic
+> transparent. Some of the optics (i.e. Eotechs, Aimpoint Micros) are hard to use
+> in Tarkov because your vision is so obstructed.
+
+I had guessed it was about field of view and shipped `AimDeltaFov` scaling in
+F25. That is a reasonable feature and it is not this one. An Eotech is a thick
+body around a small window; in Tarkov that body is solid, so aiming through one
+blanks out most of what is around it. With both eyes open the off eye fills in
+what the housing blocks. It is a **rendering** problem.
+
+The F25 feature stays, renamed to `Keep peripheral vision when aiming` and
+switched OFF by default. It was never asked for.
+
+### What the game gives you
+
+```
+ProceduralWeaponAnimation.CurrentScope : SightNBone
+SightNBone.Bone                        : Transform     // root of the housing mesh
+EFT.CameraControl.OpticSight.LensRenderer : Renderer   // the window
+EFT.CameraControl.OpticRetrice / ScopeReticle          // the aiming dot
+```
+
+So the job is: take the renderers under `Bone`, minus the lens, minus anything
+carrying a reticle component, and get them out of the way. Hiding the lens or the
+reticle would turn "see through the housing" into "the sight no longer works",
+which is why both are excluded by identity rather than by guessing at names.
+
+### Two modes, because transparency is not reliably available
+
+**Hide** switches the housing renderers to `ShadowsOnly`. The mesh stops drawing,
+the shadow stays, no material is touched. It works on every shader, so it is the
+default.
+
+**Fade** writes an alpha instead, which is what the thread's gif shows. EFT's
+weapon shaders are custom and some have no `_Color` to write; those fall back to
+Hide with one line in the log. The thread's own comments went round this exact
+problem - transparency being expensive, scopes being rendered as physical
+objects - so a mode that degrades cleanly is worth more than one that is correct
+on paper.
+
+### The part that would have bitten
+
+Every touched renderer's original shadow mode and shared materials are recorded,
+and restored on weapon change, on switching the feature off, and on unload. A
+renderer left in `ShadowsOnly` does not end with the raid: the object persists,
+so the player would find an invisible optic in the next one and have no idea why.
+Same class of hazard as the static `AimDeltaFov` in F25, and worth stating twice.
+
+### The lesson worth keeping
+
+I implemented a feature from a link I could not open, said so, and got it wrong -
+which was the predictable outcome and the reason I flagged it. But flagging a
+guess is not the same as not making one. The right move was to build nothing
+until he could paste the content, which cost him one message and me a wasted
+feature.
+
+Reddit is blocked to WebFetch, to WebSearch, and to the browser pane. Worth
+remembering rather than rediscovering: for that domain, ask for a paste.
+
+---
+
+## F27. Two switches, because there are two phenomena
+
+> what I want is options to choose between or two things, make gun blur with eyes
+> focusing on the target ahead, and/or make it a bit transparent for the effect
+> of two eyes
+
+Right to separate them. They are not two implementations of one effect, they are
+two different things your eyes do at once, and either is worth having alone.
+
+**Transparent.** The off eye has line of sight past the housing, so the housing
+stops being a wall. Alpha on the housing materials.
+
+**Doubled.** The two eyes see something this close from noticeably different
+angles, and the brain does not fuse it, because it is focused past it on the
+target. So the housing appears twice, offset by the eye separation, each copy
+faint.
+
+That second one is the important realisation. The brief said "blur", and the
+obvious reading is a depth-of-field effect - but near-object blur with both eyes
+open is not a soft focus, it is a **double image**. Implementing it as doubling
+is not an approximation of the phenomenon, it IS the phenomenon, and it happens
+to be far cheaper than any real blur: two extra draw calls sharing the original's
+mesh and materials.
+
+Default separation is 0.064 m, the average human interpupillary distance, which
+is the physically correct number. It is exposed anyway, because the housing sits
+much closer to the eye in game than a real optic does and the right *looking*
+value may not be the right *measured* one.
+
+### Why not a real depth of field
+
+EFT uses the Prism post-processing stack. Its effect components are not in
+`Assembly-CSharp` - only enums and the preset ScriptableObject are - so driving a
+real DOF means finding and hooking another assembly. And a camera DOF blurs the
+whole near field, not the optic, which is a bigger visual change than was asked
+for. Worth revisiting only if the doubling turns out not to read.
+
+### Alpha, and what happens without it
+
+Both effects need a `_Color` on the material. Some of EFT's custom weapon shaders
+have none, and those cannot be faded or ghosted at all. Rather than silently
+doing nothing, that falls back to hiding the housing, logs once, and the HUD says
+`(no alpha here)` so it is visible rather than mysterious.
+
+`Hide` also stays as a switch of its own. It is blunt, it works everywhere, and
+after this session's history a reliable fallback that the user can reach
+deliberately is worth a line in the config.
+
+### The bookkeeping that would have bitten
+
+Two ghost `GameObject`s per housing renderer, parented into the weapon. Those,
+the shadow modes, and the material arrays are all recorded and undone on weapon
+change, on switching off, and on unload. Objects parented into a weapon do not
+end with the raid - the same hazard as the static `AimDeltaFov` in F25, and the
+third time in three features that the restore path was the part most likely to
+cause a bug the user could not diagnose.

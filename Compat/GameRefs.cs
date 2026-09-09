@@ -85,6 +85,20 @@ namespace SPTFreeAim.Compat
         /// <summary>Set once the hands pool has been reached at least once.</summary>
         public static bool HandsStaminaAvailable { get; private set; }
 
+        // ---- The optic in front of your eye ---------------------------------
+        // PWA.CurrentScope is a SightNBone: the scene-side handle on whatever
+        // sight is currently being aimed through. Bone is its transform, which is
+        // the root of the housing mesh. That is what F26 needs.
+        private static readonly Member M_CurrentScope = new Member("PWA.CurrentScope", "CurrentScope");
+        private static readonly Member M_SightBone = new Member("SightNBone.Bone", "Bone");
+        private static readonly Member M_SightIsOptic = new Member("SightNBone.IsOptic", "IsOptic");
+        private static readonly Member M_LensRenderer = new Member("OpticSight.LensRenderer", "LensRenderer");
+        private static Type _boundScopeType;
+
+        /// <summary>Component types that draw the aiming dot. Never hidden.</summary>
+        private static Type[] _reticleTypes;
+        private static Type _t_OpticSight;
+
         // ---- Aiming field of view ------------------------------------------
         // CameraManager.AimDeltaFov is a PUBLIC STATIC float: how much the field
         // of view narrows when the weapon comes into the shoulder. No singleton
@@ -194,6 +208,16 @@ namespace SPTFreeAim.Compat
 
                 // Optional: absence costs only both-eyes-open, so it must not
                 // fail the whole resolve.
+                // Optional, for F26. Absence costs only the optic housing.
+                _t_OpticSight = asmCSharp.GetType("EFT.CameraControl.OpticSight", false);
+                _reticleTypes = new Type[]
+                {
+                    asmCSharp.GetType("EFT.CameraControl.OpticRetrice", false),
+                    asmCSharp.GetType("EFT.CameraControl.ScopeReticle", false),
+                    asmCSharp.GetType("CollimatorSight", false),
+                    asmCSharp.GetType("SightingCartridge", false)
+                };
+
                 Type camMgr = asmCSharp.GetType("EFT.CameraControl.CameraManager", false);
                 if (camMgr != null)
                     _f_AimDeltaFov = camMgr.GetField("AimDeltaFov",
@@ -496,6 +520,59 @@ namespace SPTFreeAim.Compat
             float next = cur - amount;
             if (next < 0f) next = 0f;
             return M_StaminaCurrent.Set(pool, next);
+        }
+
+        // ================= The optic in front of your eye ================
+
+        /// <summary>
+        /// The transform of the sight currently being aimed through, or null when
+        /// there is none - iron sights, or nothing fitted.
+        /// </summary>
+        public static Transform GetCurrentSightBone(object pwa)
+        {
+            if (pwa == null) return null;
+
+            object scope = M_CurrentScope.Get(pwa);
+            if (scope == null) return null;
+
+            Type st = scope.GetType();
+            if (st != _boundScopeType)
+            {
+                M_SightBone.Bind(st);
+                M_SightIsOptic.Bind(st);
+                _boundScopeType = st;
+                Plugin.Log.LogInfo("Optic: " + M_SightBone.Describe() + " | " + M_SightIsOptic.Describe());
+            }
+
+            return M_SightBone.Get(scope) as Transform;
+        }
+
+        /// <summary>
+        /// The lens renderer of the optic under <paramref name="bone"/>, when it
+        /// has one. This is the window - it must keep drawing.
+        /// </summary>
+        public static Renderer GetLensRenderer(Transform bone)
+        {
+            if (bone == null || _t_OpticSight == null) return null;
+
+            Component c = bone.GetComponentInChildren(_t_OpticSight, true);
+            if (c == null) return null;
+
+            if (!M_LensRenderer.Resolved) M_LensRenderer.Bind(c.GetType());
+            return M_LensRenderer.Get(c) as Renderer;
+        }
+
+        /// <summary>True when this object carries a component that draws the aiming dot.</summary>
+        public static bool IsReticleObject(GameObject go)
+        {
+            if (go == null || _reticleTypes == null) return false;
+            for (int i = 0; i < _reticleTypes.Length; i++)
+            {
+                if (_reticleTypes[i] == null) continue;
+                if (go.GetComponent(_reticleTypes[i]) != null) return true;
+                if (go.GetComponentInParent(_reticleTypes[i]) != null) return true;
+            }
+            return false;
         }
 
         // ================= Aiming field of view ==========================

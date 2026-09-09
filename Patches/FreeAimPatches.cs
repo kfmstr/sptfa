@@ -61,6 +61,7 @@ namespace SPTFreeAim.Patches
         /// <summary>Called when the local player changes, so no stale base survives a raid.</summary>
         public static void ForgetGuards()
         {
+            OpticHousing.Restore();
             GuardWeapon.Forget();
             GuardCamera.Forget();
             GuardPose.Forget();
@@ -70,6 +71,7 @@ namespace SPTFreeAim.Patches
         public static void Remove()
         {
             GameRefs.ReleaseAimFov();
+            OpticHousing.Restore();
             LocalPlayer = null;
             LocalPwa = null;
             if (_harmony != null) _harmony.UnpatchSelf();
@@ -143,11 +145,21 @@ namespace SPTFreeAim.Patches
                 cfg.ArmDrainEnabled.Value = false;
             }
 
+            try { ApplyOpticHousing(pwa, p, cfg); }
+            catch (Exception e)
+            {
+                Plugin.Log.LogError("Optic housing failed, switching it off: " + e);
+                cfg.HousingTransparent.Value = false;
+                cfg.HousingDoubled.Value = false;
+                cfg.HousingHide.Value = false;
+                OpticHousing.Restore();
+            }
+
             try { ApplyBothEyes(p, cfg); }
             catch (Exception e)
             {
                 Plugin.Log.LogError("Both eyes open failed, switching it off: " + e);
-                cfg.BothEyesOpen.Value = false;
+                cfg.KeepPeripheralVision.Value = false;
                 GameRefs.ReleaseAimFov();
             }
 
@@ -411,11 +423,34 @@ namespace SPTFreeAim.Patches
         /// CameraManager, so leaving it modified would follow the player out of
         /// the raid and into the next one.
         /// </summary>
+        /// <summary>
+        /// See through the body of the optic while aiming (F26). All the game
+        /// lookups happen here so the renderer bookkeeping in OpticHousing stays
+        /// free of reflection, per the hard rule in CLAUDE.md.
+        /// </summary>
+        private static void ApplyOpticHousing(ProceduralWeaponAnimation pwa, Plugin p, FreeAimConfig cfg)
+        {
+            OpticHousing.Options o = new OpticHousing.Options
+            {
+                Transparent = cfg.HousingTransparent.Value,
+                Alpha = cfg.HousingAlpha.Value,
+                Doubled = cfg.HousingDoubled.Value,
+                Separation = cfg.HousingSeparation.Value,
+                Hide = cfg.HousingHide.Value
+            };
+
+            Transform bone = (o.Transparent || o.Doubled || o.Hide)
+                ? GameRefs.GetCurrentSightBone(pwa)
+                : null;
+
+            OpticHousing.Frame(bone, GameRefs.GetLensRenderer(bone), p.State.AimBlend, o);
+        }
+
         private static void ApplyBothEyes(Plugin p, FreeAimConfig cfg)
         {
-            if (!cfg.BothEyesOpen.Value) { GameRefs.ReleaseAimFov(); return; }
+            if (!cfg.KeepPeripheralVision.Value) { GameRefs.ReleaseAimFov(); return; }
 
-            float open = cfg.BothEyesStrength.Value * p.State.AimBlend;
+            float open = cfg.PeripheralStrength.Value * p.State.AimBlend;
             GameRefs.SetAimFovNarrowing(1f - Mathf.Clamp01(open));
         }
 
