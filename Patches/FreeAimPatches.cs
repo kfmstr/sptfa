@@ -69,6 +69,7 @@ namespace SPTFreeAim.Patches
 
         public static void Remove()
         {
+            GameRefs.ReleaseAimFov();
             LocalPlayer = null;
             LocalPwa = null;
             if (_harmony != null) _harmony.UnpatchSelf();
@@ -131,6 +132,24 @@ namespace SPTFreeAim.Patches
 
             st.UpdateAimBlend(GameRefs.GetIsAiming(pwa), dt);
             st.UpdateGate(p.Stance.WeaponReady || !cfg.StanceGateEnabled.Value, dt, cfg.GateSpeed.Value);
+
+            // Both of these are extras. A failure in either must not take the
+            // coupling down with it - that is F19, where one reflection lookup
+            // killed the whole mod mid-raid. Each switches off only itself.
+            try { ApplyArmDrain(p, cfg, dt); }
+            catch (Exception e)
+            {
+                Plugin.Log.LogError("Arm drain failed, switching it off: " + e);
+                cfg.ArmDrainEnabled.Value = false;
+            }
+
+            try { ApplyBothEyes(p, cfg); }
+            catch (Exception e)
+            {
+                Plugin.Log.LogError("Both eyes open failed, switching it off: " + e);
+                cfg.BothEyesOpen.Value = false;
+                GameRefs.ReleaseAimFov();
+            }
 
             // The weapon's own recoil, routed to the gun bearing rather than the
             // camera (docs/07-FINDINGS.md F12.3). Read before Step so the HUD and
@@ -349,6 +368,55 @@ namespace SPTFreeAim.Patches
             root.rotation = q * root.rotation;
 
             LastPivot = pivot;
+        }
+
+        private static float _drainCarry;
+
+        /// <summary>
+        /// Take arm stamina while the weapon is up.
+        ///
+        /// The drain is accumulated and applied in whole units. The pool's own
+        /// setter ignores changes below 1.0, and although this writes the field
+        /// directly, keeping the writes coarse means the game's threshold and
+        /// exhaustion checks see a value that actually moved rather than a
+        /// thousand invisible nudges a second.
+        ///
+        /// Gate, not the raw stance flag: the weapon being on its way down should
+        /// already be costing less, and the gate is the thing that knows how far
+        /// through that transition we are.
+        /// </summary>
+        private static void ApplyArmDrain(Plugin p, FreeAimConfig cfg, float dt)
+        {
+            if (!cfg.ArmDrainEnabled.Value || LocalPlayer == null) { _drainCarry = 0f; return; }
+
+            float raised = p.State.Gate;
+            if (raised <= 0.001f) { _drainCarry = 0f; return; }
+
+            float aimed = Mathf.Lerp(1f, cfg.ArmDrainAimedMultiplier.Value, p.State.AimBlend);
+            _drainCarry += cfg.ArmDrainRate.Value * raised * aimed * dt;
+
+            if (_drainCarry < 1f) return;
+
+            float whole = Mathf.Floor(_drainCarry);
+            _drainCarry -= whole;
+            GameRefs.DrainHands(LocalPlayer, whole);
+        }
+
+        /// <summary>
+        /// Keep the room around the sight when the weapon comes up.
+        ///
+        /// Scaled by the aim blend rather than switched, so bringing the weapon
+        /// into the shoulder does not snap the field of view. Handing the stock
+        /// value back when the feature is off matters: it is a STATIC field on
+        /// CameraManager, so leaving it modified would follow the player out of
+        /// the raid and into the next one.
+        /// </summary>
+        private static void ApplyBothEyes(Plugin p, FreeAimConfig cfg)
+        {
+            if (!cfg.BothEyesOpen.Value) { GameRefs.ReleaseAimFov(); return; }
+
+            float open = cfg.BothEyesStrength.Value * p.State.AimBlend;
+            GameRefs.SetAimFovNarrowing(1f - Mathf.Clamp01(open));
         }
 
         /// <summary>Last world pivot used, for the HUD.</summary>

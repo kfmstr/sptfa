@@ -72,6 +72,28 @@ namespace SPTFreeAim.Compat
         private static bool _recoilChainBound;
         public static bool RecoilAvailable { get; private set; }
 
+        // ---- Arm fatigue ---------------------------------------------------
+        // Tarkov already models arm fatigue: PhysicalBase carries a HandsStamina
+        // pool separate from the main one. Draining THAT rather than inventing a
+        // second meter means the game's own consequences - sway, the exhausted
+        // state - come along for free.
+        private static readonly Member M_Physical = new Member("Player.Physical", "Physical");
+        private static readonly Member M_HandsStamina = new Member("PhysicalBase.HandsStamina", "HandsStamina");
+        private static readonly Member M_StaminaCurrent = new Member("Stamina.Current", "Current");
+        private static Type _boundPhysicalType, _boundStaminaType;
+
+        /// <summary>Set once the hands pool has been reached at least once.</summary>
+        public static bool HandsStaminaAvailable { get; private set; }
+
+        // ---- Aiming field of view ------------------------------------------
+        // CameraManager.AimDeltaFov is a PUBLIC STATIC float: how much the field
+        // of view narrows when the weapon comes into the shoulder. No singleton
+        // to reach through, which makes both-eyes-open a one-field change.
+        private static FieldInfo _f_AimDeltaFov;
+        private static float _stockAimDeltaFov;
+        private static bool _haveStockAimDeltaFov;
+        public static bool AimFovAvailable { get { return _f_AimDeltaFov != null; } }
+
         // ---- HandsContainer (PlayerSpring) transforms -----------------------
         // All three are public FIELDS, not properties. See Compat/Member.cs.
         private static readonly Member M_WeaponRootAnim = new Member("HandsContainer.WeaponRootAnim", "WeaponRootAnim");
@@ -169,6 +191,13 @@ namespace SPTFreeAim.Compat
 
                 M_Player_VisualPass = T_Player.GetMethod("VisualPass", ANY);
                 M_Pwa_AvoidObstacles = T_ProceduralWeaponAnimation.GetMethod("AvoidObstacles", ANY);
+
+                // Optional: absence costs only both-eyes-open, so it must not
+                // fail the whole resolve.
+                Type camMgr = asmCSharp.GetType("EFT.CameraControl.CameraManager", false);
+                if (camMgr != null)
+                    _f_AimDeltaFov = camMgr.GetField("AimDeltaFov",
+                        BindingFlags.Static | BindingFlags.Public | BindingFlags.NonPublic);
                 foreach (string n in CameraRecoilMethodNames)
                 {
                     M_Pwa_CameraRecoil = T_ProceduralWeaponAnimation.GetMethod(n, ANY);
@@ -408,6 +437,101 @@ namespace SPTFreeAim.Compat
             t.position = worldPivot + worldRot * (t.position - worldPivot);
             t.rotation = worldRot * t.rotation;
         }
+
+        // ================= Arm fatigue ===================================
+
+        private static object GetHandsPool(object player)
+        {
+            if (player == null) return null;
+
+            object phys = M_Physical.Get(player);
+            if (phys == null) return null;
+
+            Type pt = phys.GetType();
+            if (pt != _boundPhysicalType)
+            {
+                if (!M_HandsStamina.Bind(pt)) { _boundPhysicalType = pt; return null; }
+                _boundPhysicalType = pt;
+                _boundStaminaType = null;
+                Plugin.Log.LogInfo("Arm fatigue: " + M_HandsStamina.Describe() + " on " + pt.Name);
+            }
+
+            object pool = M_HandsStamina.Get(phys);
+            if (pool == null) return null;
+
+            Type st = pool.GetType();
+            if (st != _boundStaminaType)
+            {
+                if (!M_StaminaCurrent.Bind(st)) { _boundStaminaType = st; return null; }
+                _boundStaminaType = st;
+                HandsStaminaAvailable = true;
+                Plugin.Log.LogInfo("Arm fatigue: " + M_StaminaCurrent.Describe() + " on " + st.Name);
+            }
+            return pool;
+        }
+
+        /// <summary>Current hands-stamina value, or -1 when unavailable.</summary>
+        public static float GetHandsStamina(object player)
+        {
+            object pool = GetHandsPool(player);
+            return pool == null ? -1f : M_StaminaCurrent.Get(pool, -1f);
+        }
+
+        /// <summary>
+        /// Take <paramref name="amount"/> off the hands pool.
+        ///
+        /// Written straight to the field rather than through UpdateStamina(float),
+        /// which ignores any change smaller than 1.0 - a deadband that would
+        /// swallow a slow per-frame drain entirely. Exhausted is computed from
+        /// Current, so the game's own consequences still follow.
+        /// </summary>
+        public static bool DrainHands(object player, float amount)
+        {
+            object pool = GetHandsPool(player);
+            if (pool == null) return false;
+
+            float cur = M_StaminaCurrent.Get(pool, -1f);
+            if (cur < 0f) return false;
+
+            float next = cur - amount;
+            if (next < 0f) next = 0f;
+            return M_StaminaCurrent.Set(pool, next);
+        }
+
+        // ================= Aiming field of view ==========================
+
+        /// <summary>
+        /// Scale how much the view narrows when the weapon is shouldered.
+        /// 1 leaves it stock, 0 removes the narrowing entirely - both eyes open.
+        /// The stock value is captured once, so repeated calls scale the original
+        /// rather than compounding on last frame's result.
+        /// </summary>
+        public static bool SetAimFovNarrowing(float multiplier)
+        {
+            if (_f_AimDeltaFov == null) return false;
+
+            if (!_haveStockAimDeltaFov)
+            {
+                object v = _f_AimDeltaFov.GetValue(null);
+                if (!(v is float)) return false;
+                _stockAimDeltaFov = (float)v;
+                _haveStockAimDeltaFov = true;
+                Plugin.Log.LogInfo("Both eyes open: stock AimDeltaFov = " +
+                                   _stockAimDeltaFov.ToString("F2"));
+            }
+
+            _f_AimDeltaFov.SetValue(null, _stockAimDeltaFov * multiplier);
+            return true;
+        }
+
+        /// <summary>Hand the game its own value back.</summary>
+        public static void ReleaseAimFov()
+        {
+            if (_f_AimDeltaFov != null && _haveStockAimDeltaFov)
+                _f_AimDeltaFov.SetValue(null, _stockAimDeltaFov);
+        }
+
+        public static float StockAimDeltaFov { get { return _stockAimDeltaFov; } }
 
         public static string Describe()
         {

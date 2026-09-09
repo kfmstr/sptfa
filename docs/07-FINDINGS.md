@@ -1468,3 +1468,78 @@ it in practice.
 
 When a user says a specific number worked, that number is a measurement of the
 system. It is worth more than an argument about what the system ought to need.
+
+---
+
+## F25. Arms that tire, and both eyes open
+
+Two requests, both landing on things the game already models, which is the
+cheapest kind of feature to add and the most likely to behave.
+
+### Arms tire while the weapon is up
+
+> please add the slow hand drain when you move your gun from lowering position,
+> as it physically impossible to hold your gun all the time like that
+
+`PhysicalBase` carries **two** stamina pools:
+
+```
+PhysicalBase.Stamina       : Stamina    // the main bar
+PhysicalBase.HandsStamina  : Stamina    // arms, separate, drives sway
+```
+
+So this is not a new meter. Draining the pool the game already has means its own
+consequences - sway, the exhausted state, the recovery curve - follow for free,
+and nothing has to be kept in step with anything.
+
+One trap, found by reading the IL rather than the signature:
+
+```csharp
+Stamina.UpdateStamina(float stamina)
+{
+    if (Math.Abs(Current - stamina) < 1f) return;   // <- deadband
+    Current = stamina;
+    ...
+}
+```
+
+A slow drain is by definition smaller than 1.0 per frame, so every write through
+that method would have been discarded and the feature would have done nothing at
+all while appearing wired up correctly. `Stamina.Current` is a public field, so
+the drain is accumulated locally and written straight to it once it reaches a
+whole unit. `Exhausted` is computed from `Current`, so the game still reacts.
+
+Scaled by the gate rather than the raw stance flag - a weapon on its way down is
+already costing less - and multiplied while actually shouldered, which is what
+gives the ready position a reason to exist.
+
+### Both eyes open
+
+The link was a Reddit thread I could not read; the domain is blocked for me. So
+this implements the common reading of it, and if a different one was meant, it is
+one field either way.
+
+Tarkov narrows the field of view when the weapon comes into the shoulder. That
+reads as closing one eye and tunnelling onto the sight. A shooter with both eyes
+open keeps the room around the sight.
+
+```
+EFT.CameraControl.CameraManager.AimDeltaFov : Single   // public STATIC field
+```
+
+The whole feature is scaling that by the aim blend. Nothing else about the sight
+picture is touched - the optic, the reticle and the alignment stay exactly where
+the game puts them. The honest cost is that on magnified optics the narrowing IS
+the zoom, so removing it removes the magnification; `Both eyes strength` at 0.5
+keeps half of each.
+
+`AimDeltaFov` being **static** is the part worth remembering. A leftover value
+does not end with the raid - it follows the player into the next one, and into
+the main menu. The stock value is captured once and handed back whenever the
+feature is switched off or the mod releases, and `Remove()` releases it too.
+
+### Both are isolated
+
+Each runs in its own try/catch and disables only itself on failure, per F19.
+Neither can take the coupling down, which is the only part of this mod that has
+to work.

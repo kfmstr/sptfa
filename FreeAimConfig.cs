@@ -16,6 +16,7 @@ namespace SPTFreeAim
         private const string S_PIVOT = "3. Pivot";
         private const string S_STANCE = "4. Stance";
         private const string S_RECOIL = "5. Recoil";
+        private const string S_BODY = "6. Body";
         private const string S_DEBUG = "9. Debug";
 
         // ---- Main --------------------------------------------------------
@@ -66,6 +67,13 @@ namespace SPTFreeAim
         public ConfigEntry<bool> RecoilMovesGun;
         public ConfigEntry<Vector2> RecoilGunScale;
         public ConfigEntry<bool> RecoilSwapAxes;
+
+        // ---- Body --------------------------------------------------------
+        public ConfigEntry<bool> ArmDrainEnabled;
+        public ConfigEntry<float> ArmDrainRate;
+        public ConfigEntry<float> ArmDrainAimedMultiplier;
+        public ConfigEntry<bool> BothEyesOpen;
+        public ConfigEntry<float> BothEyesStrength;
 
         // ---- Debug -------------------------------------------------------
         public ConfigEntry<bool> ShowHud;
@@ -302,6 +310,47 @@ namespace SPTFreeAim
             RecoilSwapAxes = cfg.Bind(S_RECOIL, "Recoil swap axes", false,
                 "Flip if the recoil climbs sideways instead of up. The Vector3 the game exposes " +
                 "is a hand rotation, and which component is pitch was never verified.");
+
+            // -- body --
+            ArmDrainEnabled = cfg.Bind(S_BODY, "Arms tire while the weapon is up", true,
+                "Holding a rifle up is work, and Tarkov already models it: PhysicalBase carries a " +
+                "HandsStamina pool separate from the main one, which drives sway and the exhausted " +
+                "state. This drains THAT pool while the weapon is raised, so the game's own " +
+                "consequences follow rather than a second meter being invented alongside it.\n" +
+                "\n" +
+                "Lower the weapon and it stops draining and the game restores it at its own rate. " +
+                "Which is the point: low ready becomes worth using.");
+
+            ArmDrainRate = cfg.Bind(S_BODY, "Arm drain per second", 1.2f, new ConfigDescription(
+                "Hands-stamina units taken per second while the weapon is up. The pool is on the " +
+                "same scale as the main stamina bar, so 1.2/s is a slow burn you notice over a " +
+                "long hold rather than a timer. Raise it until lowering the weapon feels like a " +
+                "decision rather than a courtesy.",
+                new AcceptableValueRange<float>(0f, 20f)));
+
+            ArmDrainAimedMultiplier = cfg.Bind(S_BODY, "Extra drain while shouldered", 1.6f, new ConfigDescription(
+                "Multiplier on the rate above while the weapon is actually in the shoulder. " +
+                "Holding the sights up costs more than holding the weapon ready, which is what " +
+                "makes the ready position worth returning to. 1.0 removes the distinction.",
+                new AcceptableValueRange<float>(0.25f, 4f)));
+
+            BothEyesOpen = cfg.Bind(S_BODY, "Both eyes open", true,
+                "Keep your peripheral vision when the weapon comes into the shoulder.\n" +
+                "\n" +
+                "Tarkov narrows the field of view as you aim, which reads as closing one eye and " +
+                "tunnelling on the sight. A shooter with both eyes open does not lose the room " +
+                "around the sight. This scales CameraManager.AimDeltaFov, the game's own " +
+                "aim-narrowing amount, so nothing else about the sight picture changes - the optic " +
+                "and the reticle are exactly where the game puts them.\n" +
+                "\n" +
+                "It does mean no free zoom on magnified optics, because the narrowing is what that " +
+                "zoom IS. Back the strength off below if you want some of it back.");
+
+            BothEyesStrength = cfg.Bind(S_BODY, "Both eyes strength", 1f, new ConfigDescription(
+                "1.0 removes the aim narrowing entirely - full peripheral vision, no tunnel. " +
+                "0.0 is stock Tarkov. 0.5 keeps half of it, which is a reasonable middle if " +
+                "losing the magnification on scopes bothers you.",
+                new AcceptableValueRange<float>(0f, 1f)));
 
             // -- debug --
             ShowHud = cfg.Bind(S_DEBUG, "Show HUD", true,

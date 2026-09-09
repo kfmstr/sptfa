@@ -64,6 +64,20 @@ namespace SPTFreeAim.Debugging
                               FreeAimPatches.LastPivot.x, FreeAimPatches.LastPivot.y,
                               FreeAimPatches.LastPivot.z, cfg.GripFromEye.Value)
                         : "<color=#ffcc55>LEGACY EULER</color>  (F22 - reinterprets the axes)") +
+                Row("arms", GameRefs.HandsStaminaAvailable
+                        ? string.Format("{0,6:F0} hands stamina   drain {1}",
+                              GameRefs.GetHandsStamina(FreeAimPatches.LocalPlayer),
+                              cfg.ArmDrainEnabled.Value
+                                  ? string.Format("{0:F1}/s x{1:F1} aimed", cfg.ArmDrainRate.Value,
+                                        cfg.ArmDrainAimedMultiplier.Value)
+                                  : "<color=#ffcc55>off</color>")
+                        : "<color=#ffcc55>hands pool not reached yet</color>") +
+                Row("both eyes", GameRefs.AimFovAvailable
+                        ? (cfg.BothEyesOpen.Value
+                              ? string.Format("<color=#7fd1b9>open</color>  narrowing x{0:F2}  (stock delta {1:F1})",
+                                    1f - cfg.BothEyesStrength.Value * st.AimBlend, GameRefs.StockAimDeltaFov)
+                              : "stock Tarkov")
+                        : "<color=#ffcc55>CameraManager.AimDeltaFov not found</color>") +
                 Row("parentage", FreeAimPatches.ParentageReport) +
                 Row("cone / cap", string.Format("{0:F1} / {1:F1} deg", cfg.ConeDegrees.Value, cfg.CapDegrees.Value)) +
                 Row("k / push", string.Format("{0:F1} / {1:F2}", cfg.SpringK.Value, cfg.PushFactor.Value)) +
