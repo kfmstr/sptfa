@@ -284,26 +284,34 @@ namespace SPTFreeAim.Patches
             WeaponAnchors anchors = cfg.AnchorSnapshot();
             Vector3 pivot = anchors.Pivot(p.State.AimBlend);
 
-            // Turn the weapon about axes ACROSS the barrel.
+            // Vector3(pitch, 0, yaw) - lualeet's mapping onto the weapon root's
+            // local X and Z. THIS IS THE ONE THAT MATCHES BODYCAM. It survived
+            // unchanged from 514b815 to 42b74a5 and the owner's verdict on it was
+            // "that is right, it was the pivot. super."
             //
-            // This used to be Vector3(pitch, 0, yaw) - the weapon root's raw
-            // local X and Z, lualeet's mapping. That only aims the gun if those
-            // axes happen to lie across the bore, and on this build they do not:
-            // part of every mouse movement was rolling the weapon rather than
-            // pointing it, so the barrel kept its angle to the body and the whole
-            // gun slid around instead of hinging at the grip. F21.
+            // I replaced it with a frame built from the measured bore on the
+            // theory that X and Z could not be across the barrel. The theory was
+            // reasonable and the history says it is wrong: those axes had been
+            // producing the correct motion for seven commits. See F21.
             //
-            // Built from the MEASURED bore, so it is correct on any weapon and
-            // there is no per-gun axis to find.
-            Vector3 right, up;
-            anchors.Frame(out right, out up);
+            // The frame version is kept behind a switch, off, because it may yet
+            // be the better answer on a weapon whose root is oriented oddly - but
+            // it is not the default, and it does not get to be the default again
+            // without someone watching the gun move.
+            Vector3 euler;
+            if (cfg.TurnAboutMeasuredBore.Value)
+            {
+                Vector3 right, up;
+                anchors.Frame(out right, out up);
+                Quaternion q = Quaternion.AngleAxis(yaw, up) * Quaternion.AngleAxis(-pitch, right);
+                euler = q.eulerAngles;
+            }
+            else
+            {
+                euler = new Vector3(pitch, 0f, yaw);
+            }
 
-            Quaternion q = Quaternion.AngleAxis(yaw, up) * Quaternion.AngleAxis(-pitch, right);
-
-            // Handed to LocalRotateAround as euler because that is the signature
-            // the game's own TransformTools exposes. Quaternion.Euler(q.eulerAngles)
-            // reproduces q, so nothing is lost in the round trip.
-            GameRefs.LocalRotateAround(root, pivot, q.eulerAngles);
+            GameRefs.LocalRotateAround(root, pivot, euler);
 
             // Without this second call the pivot is left displaced and every
             // offset applied after ours is wrong. lualeet's comment, and it is

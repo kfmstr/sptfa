@@ -23,7 +23,8 @@ public static class AnchorTests
         return new WeaponAnchors
         {
             Grip = new Vector3(0.2f, 0.1f, 0f),
-            Bore = new Vector3(0f, 1f, 0f),   // Y, the default
+            Bore = new Vector3(0f, 1f, 0f),
+            BoreKnown = true,
             StockBehind = 0.30f,
             LeftHandAhead = 0.30f,
             Leeway = leeway
@@ -94,23 +95,24 @@ public static class AnchorTests
         Console.WriteLine();
         Console.WriteLine("=== yaw and pitch turn the gun ACROSS the barrel (F21) ===");
 
-        // The bug this replaces: yaw and pitch were applied to the weapon root's
-        // raw local X and Z. Those are only across the bore by luck. When one of
-        // them ran ALONG the bore, part of every mouse movement rolled the weapon
-        // instead of pointing it, so the barrel kept its angle to the body and
-        // the gun slid around rather than hinging.
+        // Frame() is the OPTIONAL turn mapping, off by default. The theory was
+        // that the weapon root's raw local X and Z could not be across the bore,
+        // so a frame built from the measured bore had to be better. The git
+        // history says otherwise: the raw axes produced Bodycam-correct motion
+        // for seven commits, and swapping them broke it (F21).
         //
-        // The necessary condition is that both axes are perpendicular to the
-        // bore, whatever the bore turns out to be. Checked here against a bore
-        // that is deliberately not axis-aligned, because an axis-aligned one
-        // would pass by accident.
+        // So this tests that Frame() does what it claims, not that it is the
+        // right thing to use. The claim is that both axes are perpendicular to
+        // the bore whatever the bore turns out to be, checked against
+        // deliberately non-axis-aligned bores - an axis-aligned one would pass
+        // by accident.
         foreach (var bore in new[] {
             new Vector3(0f, 1f, 0f),
             new Vector3(0f, 0f, 1f),
             new Vector3(0.37f, 0.51f, -0.77f),
             new Vector3(0f, 0.999f, 0.03f) })
         {
-            var w = new WeaponAnchors { Grip = Vector3.zero, Bore = bore, StockBehind = 0.3f, LeftHandAhead = 0.3f };
+            var w = new WeaponAnchors { Grip = Vector3.zero, Bore = bore, BoreKnown = true, StockBehind = 0.3f, LeftHandAhead = 0.3f };
             Vector3 r, u;
             w.Frame(out r, out u);
 
@@ -143,6 +145,38 @@ public static class AnchorTests
         Check("and that changes where a shouldered weapon pivots",
               (measured.Pivot(1f) - derived.Pivot(1f)).magnitude > 0.01f,
               string.Format("{0} vs {1}", measured.Pivot(1f), derived.Pivot(1f)));
+
+        Console.WriteLine();
+        Console.WriteLine("=== an unmeasured bore collapses the anchors onto the grip (F21) ===");
+
+        // The regression the owner caught. Deriving a buttpad 0.3 m along an axis
+        // nobody has verified puts the pivot a foot away in some arbitrary
+        // direction, and rotating about a point that far off reads as the gun
+        // SLIDING rather than hinging. With no measurement there is nothing to
+        // derive from, so the pivot must stay exactly where it was before any of
+        // this existed: on the grip.
+        var unknown = Rifle();
+        unknown.BoreKnown = false;
+        unknown.Leeway = 0.08f;
+
+        Check("no measured bore, no derived support hand",
+              (unknown.LeftHand - unknown.Grip).magnitude < 0.0001f, unknown.LeftHand.ToString());
+        Check("no measured bore, no derived buttpad",
+              (unknown.Stock - unknown.Grip).magnitude < 0.0001f, unknown.Stock.ToString());
+        Check("so the pivot is the grip, aiming or not - the pre-F20 behaviour exactly",
+              (unknown.Pivot(0f) - unknown.Grip).magnitude < 0.0001f
+              && (unknown.Pivot(1f) - unknown.Grip).magnitude < 0.0001f,
+              unknown.Pivot(0f) + " and " + unknown.Pivot(1f));
+        Check("even leeway cannot move it, because there is nowhere to move it toward",
+              (unknown.Pivot(0.5f) - unknown.Grip).magnitude < 0.0001f, unknown.Pivot(0.5f).ToString());
+
+        var measuredStockOnly = Rifle();
+        measuredStockOnly.BoreKnown = false;
+        measuredStockOnly.StockMeasured = true;
+        measuredStockOnly.MeasuredStock = new Vector3(0.2f, -0.34f, 0.02f);
+        Check("but a MEASURED buttpad is still used without a measured bore",
+              (measuredStockOnly.Stock - measuredStockOnly.MeasuredStock).magnitude < 0.001f,
+              measuredStockOnly.Stock.ToString());
 
         Console.WriteLine();
         Console.WriteLine("=== the cone is not centred on the body ===");

@@ -34,6 +34,7 @@ namespace SPTFreeAim
 
         // ---- Anchors (replaces the single pivot) --------------------------
         public ConfigEntry<bool> UseMeasuredGeometry;
+        public ConfigEntry<bool> TurnAboutMeasuredBore;
         public ConfigEntry<Vector3> AnchorGrip;
         public ConfigEntry<BoreAxis> BoreAxisChoice;
         public ConfigEntry<bool> BoreAxisInvert;
@@ -181,6 +182,19 @@ namespace SPTFreeAim
                 "no buttstock, so the stock distance below stands in for that one alone. The startup " +
                 "log and the HUD both say what was found. Turn this off only to override it by hand.");
 
+            TurnAboutMeasuredBore = cfg.Bind(S_PIVOT, "Turn about the measured bore", false,
+                "OFF is the mapping that matches Bodycam. Leave it off unless you are testing.\n" +
+                "\n" +
+                "Off applies yaw and pitch to the weapon root's local Z and X - lualeet's mapping, " +
+                "unchanged from 514b815 to 42b74a5, and the motion you approved.\n" +
+                "\n" +
+                "On builds the turn axes from the measured bore instead, so they are perpendicular " +
+                "to the barrel by construction. That sounds strictly better and the git history says " +
+                "otherwise: the raw axes had been producing the right motion for seven commits before " +
+                "I replaced them on a theory. Kept because it may be the better answer on a weapon " +
+                "whose root is oriented oddly, but it does not get to be the default again without " +
+                "someone watching the gun move. See docs/07-FINDINGS.md F21.");
+
             AnchorGrip = cfg.Bind(S_PIVOT, "Anchor: pistol grip", new Vector3(0.2f, 0.1f, 0f),
                 "The right hand on the pistol grip, as a point in the weapon root's local space. " +
                 "The braced contact: nearly still, ready to fight recoil at any moment. This is " +
@@ -222,7 +236,7 @@ namespace SPTFreeAim
                 "the bore line, which is why the cant rolls about it.",
                 new AcceptableValueRange<float>(0f, 1f)));
 
-            AnchorLeeway = cfg.Bind(S_PIVOT, "Anchor leeway", 0.08f, new ConfigDescription(
+            AnchorLeeway = cfg.Bind(S_PIVOT, "Anchor leeway", 0f, new ConfigDescription(
                 "How much the braced contact gives, 0..1.\n" +
                 "\n" +
                 "Zero is a perfectly rigid brace: the grip does not move at all. Real bracing is " +
@@ -231,7 +245,7 @@ namespace SPTFreeAim
                 "about the wrong end entirely.",
                 new AcceptableValueRange<float>(0f, 0.5f)));
 
-            InwardConeScale = cfg.Bind(S_PIVOT, "Inward cone scale", 0.55f, new ConfigDescription(
+            InwardConeScale = cfg.Bind(S_PIVOT, "Inward cone scale", 1f, new ConfigDescription(
                 "How much of the cone survives on the side the buttstock cannot swing to.\n" +
                 "\n" +
                 "At low ready the stock rests against your strong-side hip. Swinging the muzzle " +
@@ -523,6 +537,7 @@ namespace SPTFreeAim
                 StockBehind = StockBehindGrip.Value,
                 LeftHandAhead = LeftHandAheadOfGrip.Value,
                 Leeway = AnchorLeeway.Value,
+                BoreKnown = useBore,
                 StockMeasured = useStock,
                 MeasuredStock = WeaponGeometry.Stock
             };

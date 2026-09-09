@@ -70,11 +70,32 @@ namespace SPTFreeAim.Core
         public bool StockMeasured;
         public Vector3 MeasuredStock;
 
-        public Vector3 LeftHand { get { return Grip + Bore * LeftHandAhead; } }
+        /// <summary>
+        /// True when the bore was measured off the weapon rather than guessed
+        /// from a configured axis.
+        ///
+        /// This gates the derived anchors, and it has to. Deriving a buttpad
+        /// 0.3 m along an axis nobody has verified puts the pivot a foot away
+        /// from the weapon in some arbitrary direction, and rotating about a
+        /// point that far off reads as the gun SLIDING rather than hinging -
+        /// which is exactly the regression the owner caught. Without a measured
+        /// bore the anchors collapse onto the grip, which is the behaviour that
+        /// matched Bodycam for seven commits. F21.
+        /// </summary>
+        public bool BoreKnown;
+
+        public Vector3 LeftHand
+        {
+            get { return BoreKnown ? Grip + Bore * LeftHandAhead : Grip; }
+        }
 
         public Vector3 Stock
         {
-            get { return StockMeasured ? MeasuredStock : Grip - Bore * StockBehind; }
+            get
+            {
+                if (StockMeasured) return MeasuredStock;
+                return BoreKnown ? Grip - Bore * StockBehind : Grip;
+            }
         }
 
         /// <summary>

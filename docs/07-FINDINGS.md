@@ -1135,7 +1135,7 @@ what they are for the same reason.
 
 ---
 
-## F21. The gun was never hinging, because nobody knew where the barrel was
+## F21. I broke a working mechanic and then "fixed" the wrong thing
 
 The owner, after F20 shipped:
 
@@ -1144,72 +1144,94 @@ The owner, after F20 shipped:
 > always perpendicular to axis of my body. the left hand should lead and give the
 > gun the angle left right and up and down, like the right hand is the fixed point
 
-F20 moved the pivot to the right place and the weapon still did not hinge about
-it. The pivot was not the problem. **The rotation axes were.**
-
-### The bug
-
-The apply step had been, since lualeet's original:
+I read that as a bug in the rotation axes. The apply step had used lualeet's
+mapping since the beginning:
 
 ```csharp
 GameRefs.LocalRotateAround(root, pivot, new Vector3(pitch, 0f, yaw));
 ```
 
-Pitch on the weapon root's local X, yaw on its local Z. That aims the weapon only
-if X and Z happen to lie **across** the bore. Nothing guarantees that. On this
-build one of them ran along the barrel, so a share of every mouse movement was
-**rolling** the weapon rather than pointing it. The barrel kept its angle to the
-body, the whole gun translated around instead of swinging, and the pivot - now
-correctly at the grip - had nothing to hinge.
+Pitch on the weapon root's local X, yaw on its local Z. I reasoned that nothing
+guarantees those axes lie across the bore, that one of them probably ran along
+the barrel, and that a share of every mouse movement was therefore rolling the
+weapon rather than pointing it. I rewrote it to build the turn axes from a
+measured bore, wrote the finding up as fact, and shipped it.
 
-The invert and swap toggles could not fix this. They flip signs and exchange two
-axes; they cannot produce an axis that is not in the set.
+Then he said: *"You had it in the early versions and it was moving exactly as at
+body cam, then two three commits back you changed it."*
 
-### It did not need to be guessed
-
-I had told him to find the bore axis by experiment. That was the wrong answer,
-and the assembly says so plainly. `ProceduralWeaponAnimation` carries:
+He was right. The apply step is byte-identical from `514b815` - the commit whose
+verdict was "yes, that is right, it was the pivot. super." - through `42b74a5`:
 
 ```
-LINE_OF_SIGHT_P0 = "mod_align_rear"
-LINE_OF_SIGHT_P1 = "mod_align_front"
+514b815  8fd4a4162ee4e5b0cebd5e7033cec770
+1e5f52c  8fd4a4162ee4e5b0cebd5e7033cec770
+58c19a1  8fd4a4162ee4e5b0cebd5e7033cec770
+c66672b  8fd4a4162ee4e5b0cebd5e7033cec770
+9700140  8fd4a4162ee4e5b0cebd5e7033cec770
+04c8000  8fd4a4162ee4e5b0cebd5e7033cec770
+42b74a5  8fd4a4162ee4e5b0cebd5e7033cec770
 ```
 
-Two named transforms on every weapon, defining its sight line. Rear to front IS
-the bore, on this weapon, with these attachments, expressed in the weapon root's
-own local space by one `InverseTransformPoint` each. `mod_pistol_grip` and
-`mod_stock` are there too, so the grip and the buttpad are readable the same way.
+Seven commits of Bodycam-correct motion out of the mapping I declared broken.
+Whatever the weapon root's local X and Z are, they were working.
 
-So `Compat/WeaponGeometry.cs` measures all three off the weapon in your hands,
-once per weapon change, and the turn axes are built from the measured bore:
+### What actually broke it
 
-```csharp
-anchors.Frame(out right, out up);
-Quaternion q = Quaternion.AngleAxis(yaw, up) * Quaternion.AngleAxis(-pitch, right);
+`df988c5`, the F20 anchors commit, and not through the axes at all. It changed
+one pivot into three derived anchors:
+
+```
+LeftHand = Grip + Bore * 0.30
+Stock    = Grip - Bore * 0.30
 ```
 
-Both axes perpendicular to the barrel by construction, on any weapon, with no
-per-gun tuning and no axis to find.
+with `Bore` defaulting to a **guessed** local Y, because I had made the bore axis
+a dropdown for the user to find by experiment. Guess the axis wrong and the
+buttpad lands 0.3 m away from the weapon in an arbitrary direction. Rotating
+about a point that far off is barely a rotation at all: over the small angles
+involved it is almost pure translation. The gun slides, the barrel holds its
+angle to the body, and nothing appears to hinge.
 
-The fallback is per value rather than all-or-nothing: a pistol has a real grip
-and a real sight line but no buttstock, so the configured stock distance stands
-in for that one alone. The startup log and the HUD both name what was found.
+The symptom he described was precise and it was the pivot, exactly as in F12. I
+went looking in the axes because I had just finished convincing myself the axes
+were suspect.
 
-### The lesson worth keeping
+### The fix, and what it is not
 
-This is the third time an inherited axis convention has cost a day - F10, F19's
-cousin in the recoil mapping, and now this - and the first time I checked whether
-the game already knew the answer. It did, and it had been sitting in a string
-constant the whole time.
+1. **The original mapping is restored as the default.** The bore-frame version
+   is still there, behind `Turn about the measured bore`, off. It may yet be
+   better on a weapon whose root is oriented oddly. It does not get to be the
+   default again without someone watching the gun move.
+2. **Derived anchors require a measured bore.** `WeaponAnchors.BoreKnown` gates
+   them: without a measurement the support hand and buttpad collapse onto the
+   grip, so the pivot is exactly where it was before F20 existed. A guessed axis
+   can no longer move the pivot at all.
+3. **Everything F20 added is now off by default** - leeway 0, inward cone scale
+   1.0 - so the shipped feel is the approved one and each new mechanic is opt-in.
 
-The rule that keeps paying: **verify against the assembly before writing code.**
-I applied it to member names from the start and never thought to apply it to
-geometry. "Find it by experiment" is a reasonable thing to ask a user when the
-information genuinely is not available. It is a poor thing to ask when the
-information is a named transform on the object in question.
+`WeaponGeometry` survives and is worth keeping. `mod_align_rear` to
+`mod_align_front` really is the bore, measured off the weapon in hand, and it
+removes the guess that caused this. It just is not licence to rewrite a working
+rotation.
 
-Worth noticing too that the owner reported this as a physical observation - the
-barrel stays perpendicular to my body - and that description localised the bug
-faster than any log line would have. He has now been right about the mechanism
-three times running (F11, F12, F20), each time from watching rather than from
-reading code.
+### The lessons, and there are three
+
+**Check whether it ever worked before deciding it is broken.** One `git log -p`
+on the apply step would have shown seven commits of stability and sent me
+straight to `df988c5`. The whole session has run on "verify against the
+assembly"; the same discipline applies to the repository, and I did not apply it.
+
+**A plausible mechanism is not a diagnosis.** The axis argument was sound in the
+abstract and I wrote it into the findings as established fact, complete with a
+confident lesson about inherited axis conventions. It was a hypothesis I had not
+tested, presented as a conclusion. That is worse than being wrong quietly,
+because the docs are what the next person trusts.
+
+**A new default is a change to something that already works.** F20 shipped four
+new behaviours all switched on. When the feel changed there were four candidates
+and no way to bisect. The mod's own convention already had the answer - stamina
+and weight-scaled ADS are off by default, and the reason given was that they
+change balance. The same reasoning applies to anything that alters the motion:
+new mechanics go in off, and get turned on one at a time by someone watching.
+
