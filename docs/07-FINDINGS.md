@@ -1668,3 +1668,78 @@ change, on switching off, and on unload. Objects parented into a weapon do not
 end with the raid - the same hazard as the static `AimDeltaFov` in F25, and the
 third time in three features that the restore path was the part most likely to
 cause a bug the user could not diagnose.
+
+---
+
+## F28. Prism was reachable. I looked in one assembly and called it impossible.
+
+> so EFT uses the Prism post stack is not reachable at all?
+
+Fair question, and no. In F27 I wrote that a real depth of field was off the
+table because "EFT's Prism post stack is not reachable from Assembly-CSharp".
+That sentence is true and the conclusion drawn from it is not: I searched one
+assembly out of the hundred and sixty in `EscapeFromTarkov_Data\Managed`, found
+only Prism's enums, and stopped.
+
+One directory listing later:
+
+```
+Unity.Postprocessing.Runtime.dll     216 KB
+```
+
+Unity's Post Processing Stack v2, shipped with the game, containing:
+
+```
+UnityEngine.Rendering.PostProcessing.DepthOfField
+    focusDistance : FloatParameter
+    aperture      : FloatParameter
+    focalLength   : FloatParameter
+    kernelSize    : KernelSizeParameter
+```
+
+Three numbers, and they are the three a real lens has. Nothing exotic was needed
+at all - the effect was sitting in a public, documented, well-known package the
+whole time.
+
+### What it takes
+
+A `PostProcessVolume` with a runtime-built `PostProcessProfile` holding a
+`DepthOfField`, at high priority, weighted in by the aim blend. The one thing
+that is not obvious: the volume must sit on a layer the game's own
+`PostProcessLayer.volumeLayer` mask includes, or it is silently ignored. That
+mask is read off the layer rather than guessed - the lowest set bit is used.
+
+The focus distance is a raycast down the centre of the view. Not a setting, and
+deliberately the VIEW's direction rather than the gun's, because free aim means
+the gun is frequently pointing somewhere the eye is not, and it is the eye that
+focuses.
+
+Off by default. It is the only thing added in this session that costs real
+frames, and the linked thread spent half its comments on exactly that cost.
+
+### On the scope glare
+
+> I remember in the old tarkov they also had a glare of the optic for all the
+> optics, can we turn it on?
+
+Nothing in `Assembly-CSharp` exposes a per-optic glare. The only flare-shaped
+things are `UltimateBloom.m_UseLensFlare` (the global bloom's flare, not the
+optic's) and a pile of bot-AI "flare" fields that are about grenades.
+
+So whether the old effect can be switched back on is a question about what the
+lens SHADER still carries, and that is runtime data no amount of decompiling will
+answer. `Log the optic lens material` prints the shader name and every property
+on the current optic's lens, once per weapon. Two minutes in a raid answers it
+properly, which beats another guess.
+
+### The lesson worth keeping
+
+"Not reachable" was a claim about the world made from a search of one file. The
+honest version was "I did not find it in Assembly-CSharp", and the difference
+between those two sentences is the difference between a fact and an assumption
+wearing a fact's clothes.
+
+This is the same failure as F21 and F23 in a different costume: reasoning
+confidently from a partial search, when widening the search was a single cheap
+command. The owner has now caught it three times by simply asking whether I was
+sure.

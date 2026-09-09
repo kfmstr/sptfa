@@ -72,6 +72,7 @@ namespace SPTFreeAim.Patches
         {
             GameRefs.ReleaseAimFov();
             OpticHousing.Restore();
+            FocusDepth.Release();
             LocalPlayer = null;
             LocalPwa = null;
             if (_harmony != null) _harmony.UnpatchSelf();
@@ -153,6 +154,14 @@ namespace SPTFreeAim.Patches
                 cfg.HousingDoubled.Value = false;
                 cfg.HousingHide.Value = false;
                 OpticHousing.Restore();
+            }
+
+            try { ApplyFocusDepth(pwa, p, cfg); }
+            catch (Exception e)
+            {
+                Plugin.Log.LogError("Depth of field failed, switching it off: " + e);
+                cfg.DofEnabled.Value = false;
+                FocusDepth.Release();
             }
 
             try { ApplyBothEyes(p, cfg); }
@@ -444,6 +453,22 @@ namespace SPTFreeAim.Patches
                 : null;
 
             OpticHousing.Frame(bone, GameRefs.GetLensRenderer(bone), p.State.AimBlend, o);
+        }
+
+        private static void ApplyFocusDepth(ProceduralWeaponAnimation pwa, Plugin p, FreeAimConfig cfg)
+        {
+            if (cfg.DumpLensMaterial.Value)
+                GameRefs.DumpLensMaterialOnce(GameRefs.GetCurrentSightBone(pwa));
+
+            FocusDepth.Frame(Camera.main, p.State.AimBlend, new FocusDepth.Options
+            {
+                Enabled = cfg.DofEnabled.Value,
+                Aperture = cfg.DofAperture.Value,
+                FocalLength = cfg.DofFocalLength.Value,
+                MaxDistance = cfg.DofMaxDistance.Value,
+                OnlyWhileAiming = cfg.DofOnlyAiming.Value,
+                Strength = cfg.DofStrength.Value
+            });
         }
 
         private static void ApplyBothEyes(Plugin p, FreeAimConfig cfg)

@@ -72,6 +72,11 @@ namespace SPTFreeAim.Debugging
                                         cfg.ArmDrainAimedMultiplier.Value)
                                   : "<color=#ffcc55>off</color>")
                         : "<color=#ffcc55>hands pool not reached yet</color>") +
+                Row("focus (DOF)", cfg.DofEnabled.Value
+                        ? string.Format("<color=#7fd1b9>{0:F1} m</color>  f/{1:F1}  {2}mm   {3}",
+                              FocusDepth.LastFocus, cfg.DofAperture.Value,
+                              cfg.DofFocalLength.Value.ToString("F0"), FocusDepth.Status)
+                        : "off (costs frames - try 'doubled' first)") +
                 Row("optic housing", HousingModes(cfg) + "  " + OpticHousing.LastReport) +
                 Row("peripheral", GameRefs.AimFovAvailable
                         ? (cfg.KeepPeripheralVision.Value

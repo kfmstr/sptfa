@@ -78,6 +78,13 @@ namespace SPTFreeAim
         public ConfigEntry<bool> HousingDoubled;
         public ConfigEntry<float> HousingSeparation;
         public ConfigEntry<bool> HousingHide;
+        public ConfigEntry<bool> DofEnabled;
+        public ConfigEntry<float> DofAperture;
+        public ConfigEntry<float> DofFocalLength;
+        public ConfigEntry<float> DofMaxDistance;
+        public ConfigEntry<bool> DofOnlyAiming;
+        public ConfigEntry<float> DofStrength;
+        public ConfigEntry<bool> DumpLensMaterial;
         public ConfigEntry<bool> KeepPeripheralVision;
         public ConfigEntry<float> PeripheralStrength;
 
@@ -380,6 +387,52 @@ namespace SPTFreeAim
                 "Worth knowing about because it works on EVERY shader. The other two need a colour " +
                 "property to write and some of EFT's custom weapon shaders have none - when that " +
                 "happens the log says so and it falls back to this anyway.");
+
+            DofEnabled = cfg.Bind(S_BODY, "Depth of field: focus past the gun", false,
+                "A REAL camera depth of field, focused on whatever you are looking at, so the gun " +
+                "goes soft the way it does when your eyes are downrange.\n" +
+                "\n" +
+                "The focus distance is not a setting - it is a raycast down the middle of the " +
+                "screen. Look at a wall two metres away and the gun sharpens up; look down a " +
+                "street and it melts. Deliberately the VIEW's direction, not the gun's: free aim " +
+                "means the gun is often pointing somewhere your eye is not, and the eye is what " +
+                "focuses.\n" +
+                "\n" +
+                "OFF BY DEFAULT because this one genuinely costs frames. A DOF pass is real work " +
+                "for the GPU. The doubling above is nearly free by comparison and gets at the same " +
+                "idea - try that first, and reach for this if you want the full effect.");
+
+            DofAperture = cfg.Bind(S_BODY, "DOF aperture (f-stop)", 2.8f, new ConfigDescription(
+                "Lower is a shallower depth of field, so more blur on everything off the focus " +
+                "plane. f/2.8 is a fast lens and reads as strongly cinematic; f/8 is subtle.",
+                new AcceptableValueRange<float>(0.5f, 32f)));
+
+            DofFocalLength = cfg.Bind(S_BODY, "DOF focal length (mm)", 50f, new ConfigDescription(
+                "Longer throws more of the frame out of focus. 50 mm is roughly what the human " +
+                "eye does; going much above that starts to look like a telephoto rather than a " +
+                "pair of eyes.",
+                new AcceptableValueRange<float>(10f, 300f)));
+
+            DofMaxDistance = cfg.Bind(S_BODY, "DOF max focus distance (m)", 120f, new ConfigDescription(
+                "Where to focus when the ray hits nothing - open sky, or past the far limit.",
+                new AcceptableValueRange<float>(10f, 500f)));
+
+            DofOnlyAiming = cfg.Bind(S_BODY, "DOF only while aiming", true,
+                "On, it fades in as you shoulder the weapon. Off, it is always there, which is " +
+                "more truthful about how eyes work and much more noticeable while moving.");
+
+            DofStrength = cfg.Bind(S_BODY, "DOF strength", 1f, new ConfigDescription(
+                "Weight of the effect. Back it off rather than raising the f-stop if you want it " +
+                "present but quieter.",
+                new AcceptableValueRange<float>(0f, 1f)));
+
+            DumpLensMaterial = cfg.Bind(S_BODY, "Log the optic lens material", false,
+                "DIAGNOSTIC, for the scope glare question. Writes the shader name and every " +
+                "property on the current optic's lens material to the log, once per weapon.\n" +
+                "\n" +
+                "Nothing in the client assembly exposes a per-optic glare, so whether the old " +
+                "lens-glare effect can be switched back on depends on what that shader still " +
+                "carries. Turn this on, aim down a scope, and send me the log lines.");
 
             KeepPeripheralVision = cfg.Bind(S_BODY, "Keep peripheral vision when aiming", false,
                 "Keep your peripheral vision when the weapon comes into the shoulder.\n" +

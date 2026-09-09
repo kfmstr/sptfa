@@ -575,6 +575,56 @@ namespace SPTFreeAim.Compat
             return false;
         }
 
+        private static Material _dumpedFor;
+
+        /// <summary>
+        /// Write the optic lens's shader and every property it exposes to the
+        /// log, once per material.
+        ///
+        /// Nothing in Assembly-CSharp exposes a per-optic glare, so whether the
+        /// old lens-glare effect can be turned back on is a question about what
+        /// the SHADER still carries - and that is runtime data. Rather than guess
+        /// at property names, print them.
+        /// </summary>
+        public static void DumpLensMaterialOnce(Transform bone)
+        {
+            Renderer lens = GetLensRenderer(bone);
+            if (lens == null) return;
+
+            Material m = lens.sharedMaterial;
+            if (m == null || ReferenceEquals(m, _dumpedFor)) return;
+            _dumpedFor = m;
+
+            System.Text.StringBuilder sb = new System.Text.StringBuilder();
+            sb.Append("Optic lens material: ").Append(m.name)
+              .Append("   shader: ").Append(m.shader == null ? "none" : m.shader.name);
+
+            try
+            {
+                int n = m.shader.GetPropertyCount();
+                for (int i = 0; i < n; i++)
+                    sb.Append("\n    ").Append(m.shader.GetPropertyType(i))
+                      .Append("  ").Append(m.shader.GetPropertyName(i));
+            }
+            catch (Exception e)
+            {
+                // Older Unity has no shader reflection at runtime. Fall back to
+                // asking about the names a glare would plausibly use.
+                sb.Append("\n    (no shader reflection: ").Append(e.GetType().Name).Append(")");
+                string[] guesses =
+                {
+                    "_Glare", "_GlareIntensity", "_LensFlare", "_Flare", "_Reflection",
+                    "_ReflectionIntensity", "_ReflectionColor", "_SpecColor", "_Glossiness",
+                    "_EmissionColor", "_Fresnel", "_FresnelPower", "_RimColor", "_RimPower"
+                };
+                for (int i = 0; i < guesses.Length; i++)
+                    if (m.HasProperty(guesses[i]))
+                        sb.Append("\n    HAS ").Append(guesses[i]);
+            }
+
+            Plugin.Log.LogInfo(sb.ToString());
+        }
+
         // ================= Aiming field of view ==========================
 
         /// <summary>
