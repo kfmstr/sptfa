@@ -62,7 +62,7 @@ and the F10 probe answers whether Intercept is available in about a minute. See
   `docs/07-FINDINGS.md` F15 and `CREDITS.md`.
 - **Keep every reflection lookup in one file.** Every Tarkov client update
   re-obfuscates class names, so an update must mean fixing one place.
-- **Credit `lualeet/sptarkov-deadzone` (MIT)** for the pivot maths, and say in
+- **Credit `lualeet/sptarkov-deadzone` (Unlicense)** for the pivot maths, and say in
   the mod description that this continues that work.
 - **Verify, do not assume, that shots follow the barrel.** Rotating the weapon
   model does not automatically move the bullet. This is an explicit test step.

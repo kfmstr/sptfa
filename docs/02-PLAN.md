@@ -161,6 +161,8 @@ plus 2 to 3 for Tier 2 if the spike succeeds.
 - Every Tarkov client update re-obfuscates class names. Keep reflection lookups in one file.
 - Pin the SPT version range in the plugin metadata.
 - Publish on The Forge (sp-mod.com). Ask for testers in the SPT Discord `#mods-development` before public release.
-- MIT is the community licence norm. Credit lualeet's deadzone mod for the pivot maths.
+- MIT is the community licence norm for our own release. Credit lualeet's deadzone
+  mod for the pivot maths - it is the Unlicense (public domain), so the credit is
+  courtesy rather than obligation. See `07-FINDINGS.md` F17.
 - Nothing on The Forge currently offers standalone free aim. The closest listed are
   Canted Aiming and Quick Aim, which do different things.

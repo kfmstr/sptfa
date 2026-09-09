@@ -7,7 +7,7 @@ namespace SPTFreeAim.Core
     /// so "the offset" has a single magnitude, which is what the cone and the
     /// hard cap are defined against (docs/01-SPEC.md section 2).
     ///
-    /// Wrap/clamp helpers derive from lualeet/sptarkov-deadzone (MIT) via
+    /// Wrap/clamp helpers derive from lualeet/sptarkov-deadzone (Unlicense) via
     /// SPT-Realism-Mod-Client. Credited in the mod description; see CLAUDE.md.
     /// </summary>
     public static class AngleMath

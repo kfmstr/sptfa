@@ -227,8 +227,8 @@ namespace SPTFreeAim.Patches
         }
 
         /// <summary>
-        /// The apply step, derived from lualeet/sptarkov-deadzone (MIT) via
-        /// lualeet's deadzone mod (MIT). Rotate the weapon root about
+        /// The apply step, derived from lualeet/sptarkov-deadzone (Unlicense) via
+        /// lualeet's deadzone mod (Unlicense). Rotate the weapon root about
         /// a pivot set back from the muzzle so the gun swings about roughly the
         /// shoulder rather than spinning about its middle.
         ///

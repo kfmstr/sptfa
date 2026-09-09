@@ -1,16 +1,19 @@
 # Credits and third-party material
 
-## lualeet/sptarkov-deadzone — MIT
+## lualeet/sptarkov-deadzone — the Unlicense (public domain)
 
 The pivot-rotation approach in the apply step, and the angle wrap/clamp helpers
 in `Core/AngleMath.cs`, derive from lualeet's SPT deadzone mod. This project
 continues that work.
 
-MIT permits reuse with attribution and the licence notice. Excerpts of that
-source are kept in `reference/` for exactly that reason.
+This project described it as MIT for a long time. It is not: lualeet released it
+under **the Unlicense**, a public-domain dedication with no conditions - no
+attribution requirement, no notice to carry. Verified against the repository's
+own LICENSE file (`docs/07-FINDINGS.md` F17).
 
-> **TODO:** add lualeet's `LICENSE` text to `reference/` alongside the excerpts.
-> MIT requires the notice to travel with the code, and it is currently missing.
+So the credit here is courtesy, not obligation, and the excerpts in `reference/`
+carry no licence burden. Credit is still the right thing: this project exists
+because that mod worked out the pivot maths first.
 
 The drive loop is deliberately *not* lualeet's — see `docs/04-DECISIONS.md` D4.
 Their offset accumulates camera-minus-gun and never returns to zero; ours is

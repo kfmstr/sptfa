@@ -819,3 +819,35 @@ The constants had already been copied *out* of those files into code, where
 deleting the source did not touch them. Removing a source does not remove what
 was taken from it, and the copy that matters is usually the one that has already
 been absorbed somewhere else.
+
+---
+
+## F17. lualeet's mod is the Unlicense, not MIT
+
+Every document in this project has said MIT since the handoff — `CLAUDE.md`,
+the plan's release notes, the README, `CREDITS.md`, and three source-file
+headers. Checked against the repository while adding the licence notice MIT
+requires.
+
+`lualeet/sptarkov-deadzone` ships **the Unlicense**: a public-domain dedication.
+No attribution requirement, no notice to carry, no conditions of any kind.
+
+Unusually, checking a licence here removed an obligation rather than adding one.
+The `reference/` excerpts carry no burden, the planned MIT release is unaffected,
+and there is no notice missing.
+
+**The credit stays.** Nothing requires it and it is still correct: this project
+exists because that mod worked out the pivot maths first, and F12.1 only found
+the pivot was in the wrong *place* because the mechanism was already there to
+move. Attribution as courtesy rather than compliance.
+
+### Both licences were assumed, and both assumptions were wrong
+
+Worth putting next to F15. Realism was assumed permissive and is CC BY-NC-ND —
+the assumption was too loose, and 3,343 lines went into a public repo. lualeet
+was assumed MIT and is public domain — the assumption was too strict, and work
+was queued to satisfy a requirement that does not exist.
+
+Neither licence had been read. The handoff asserted both, and the assertions
+propagated into eight files across code and docs before anyone opened either
+`LICENSE`. Reading two files would have cost a minute at the start.

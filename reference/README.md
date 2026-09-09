@@ -5,9 +5,9 @@ Third-party source, included so the IDE agent can read it without network access
 
 | File | Origin | Licence | Use it for |
 |---|---|---|---|
-| `lualeet-DeadzonePatch.cs` | lualeet/sptarkov-deadzone | MIT | The pivot-rotation apply step (`ApplyDeadzone`). **Not** the drive loop. |
-| `lualeet-PluginSettings.cs` | lualeet/sptarkov-deadzone | MIT | Config surface shape, per-weapon settings scaffolding |
-| `lualeet-Plugin.cs` | lualeet/sptarkov-deadzone | MIT | BepInEx plugin entry point shape |
+| `lualeet-DeadzonePatch.cs` | lualeet/sptarkov-deadzone | Unlicense | The pivot-rotation apply step (`ApplyDeadzone`). **Not** the drive loop. |
+| `lualeet-PluginSettings.cs` | lualeet/sptarkov-deadzone | Unlicense | Config surface shape, per-weapon settings scaffolding |
+| `lualeet-Plugin.cs` | lualeet/sptarkov-deadzone | Unlicense | BepInEx plugin entry point shape |
 
 ## Critical reading note
 
@@ -30,7 +30,8 @@ See `../docs/04-DECISIONS.md` D4 for why.
 
 ## Attribution requirement
 
-lualeet's mod is MIT. Credit it in the source and in the published mod description,
+lualeet's mod is the Unlicense - public domain, no conditions at all. Credit it in
+the source and in the mod description anyway,
 and state that this continues that work. Realism credits it in a code comment, which
 is the community norm.
 
@@ -50,8 +51,8 @@ editor outside the solution.
 
 ## What is here, and what is not
 
-**lualeet's deadzone mod (MIT)** — kept. MIT allows redistribution with the
-licence notice; see the TODO in `../CREDITS.md` about adding that notice.
+**lualeet's deadzone mod (Unlicense)** — kept. Public domain: redistribution
+carries no conditions, and no notice is required. Credited anyway.
 
 **SPT-Realism-Mod-Client — REMOVED.** It is licensed CC BY-NC-ND 4.0, and
 NoDerivatives means excerpts of it cannot be redistributed here. The source was

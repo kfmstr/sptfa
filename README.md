@@ -7,7 +7,7 @@ looks, reproducing the aiming model of *Bodycam*.
 follow the gun a moment later. Active only when the weapon is raised.
 
 Continues the work of [lualeet/sptarkov-deadzone](https://github.com/lualeet/sptarkov-deadzone)
-(MIT), whose pivot-rotation maths is reused for the apply step. The drive loop
+(Unlicense), whose pivot-rotation maths is reused for the apply step. The drive loop
 runs the causation the other way round, on purpose — see `docs/04-DECISIONS.md`
 D4.
 
@@ -143,7 +143,7 @@ Everything else is a stable member name, but verify rather than assume.
 
 ## Credits and licence
 
-- `lualeet/sptarkov-deadzone` (MIT) — the pivot rotation maths in the apply step,
+- `lualeet/sptarkov-deadzone` (Unlicense) — the pivot rotation maths in the apply step,
   and the wrap/clamp helpers.
 - `space-commits/SPT-Realism-Mod-Client` — read for technique on stance poses and
   camera recoil replacement. **No runtime dependency**, deliberately: Realism also

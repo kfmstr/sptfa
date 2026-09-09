@@ -15,7 +15,7 @@ namespace SPTFreeAim
     /// The gun points where the mouse points, instantly. The body turns to
     /// follow the gun a moment later. Active only when the weapon is raised.
     ///
-    /// Continues the work of lualeet/sptarkov-deadzone (MIT), whose pivot
+    /// Continues the work of lualeet/sptarkov-deadzone (Unlicense), whose pivot
     /// rotation maths is reused for the apply step. The drive loop is different
     /// on purpose - see docs/04-DECISIONS.md D4.
     /// </summary>
