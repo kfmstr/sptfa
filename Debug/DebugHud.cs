@@ -42,7 +42,9 @@ namespace SPTFreeAim.Debugging
             FreeAimConfig cfg = p.Cfg;
             float mag = st.Offset.magnitude;
             WeaponAnchors anchors = cfg.AnchorSnapshot();
-            Vector3 pivot = anchors.Pivot(st.AimBlend);
+            Vector3 pivot = cfg.PivotModelChoice.Value == PivotModel.Classic
+                ? cfg.PivotOffset.Value
+                : anchors.Pivot(st.AimBlend);
 
             TrackDecay(mag);
 
@@ -73,8 +75,12 @@ namespace SPTFreeAim.Debugging
                 // actually is this frame rather than only what was configured.
                 Row("pivot", string.Format("{0,5:F2} {1,5:F2} {2,5:F2}   {3}",
                         pivot.x, pivot.y, pivot.z,
-                        st.AimBlend > 0.5f ? "toward BUTTPAD" : "toward GRIP")) +
-                Row("geometry", WeaponGeometry.HaveBore
+                        cfg.PivotModelChoice.Value == PivotModel.Classic
+                            ? "<color=#7fd1b9>CLASSIC</color> - one fixed point"
+                            : "ANCHORS - " + (st.AimBlend > 0.5f ? "toward BUTTPAD" : "toward GRIP"))) +
+                Row("geometry", cfg.PivotModelChoice.Value == PivotModel.Classic
+                        ? "<color=#7fd1b9>not used</color> - Classic pivot model"
+                        : WeaponGeometry.HaveBore
                         ? "<color=#7fd1b9>measured</color>  bore " + Vec(anchors.Bore)
                           + (WeaponGeometry.HaveGrip ? "  grip ok" : "  <color=#ffcc55>grip fallback</color>")
                           + (WeaponGeometry.HaveStock ? "  stock ok" : "  stock derived")

@@ -282,7 +282,15 @@ namespace SPTFreeAim.Patches
             WeaponGeometry.EnsureMeasured(root);
 
             WeaponAnchors anchors = cfg.AnchorSnapshot();
-            Vector3 pivot = anchors.Pivot(p.State.AimBlend);
+
+            // CLASSIC is the default and it is deliberately the plain thing: one
+            // configured point, applied identically in every stance, exactly as
+            // 514b815 did it. Nothing measured, nothing derived, nothing that
+            // moves with the aim blend. That is the version whose motion matched
+            // Bodycam, and it stays reachable in one dropdown. F21.
+            Vector3 pivot = cfg.PivotModelChoice.Value == PivotModel.Classic
+                ? cfg.PivotOffset.Value
+                : anchors.Pivot(p.State.AimBlend);
 
             // Vector3(pitch, 0, yaw) - lualeet's mapping onto the weapon root's
             // local X and Z. THIS IS THE ONE THAT MATCHES BODYCAM. It survived
@@ -362,11 +370,12 @@ namespace SPTFreeAim.Patches
 
             root.localPosition += p.Stance.PosePos;
 
-            Quaternion add = Quaternion.identity;
-            add.x = p.Stance.PoseRot.x;
-            add.y = p.Stance.PoseRot.y;
-            add.z = p.Stance.PoseRot.z;
-            root.localRotation *= add;
+            // Quaternion.Euler, not three components poked into an identity
+            // quaternion. That older form left w at 1, so the result was not a
+            // unit quaternion and the rotation it described was not the one the
+            // numbers said - harmless while the values were zero, wrong the
+            // moment anybody tuned them.
+            root.localRotation *= Quaternion.Euler(p.Stance.PoseRot);
         }
 
         /// <summary>

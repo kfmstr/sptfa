@@ -2,6 +2,17 @@ using UnityEngine;
 
 namespace SPTFreeAim.Core
 {
+    /// <summary>
+    /// Which description of the weapon's hinge to use.
+    ///
+    /// Classic is one fixed pivot point, applied the same way in every stance.
+    /// It is less true to how a rifle is held and it is the DEFAULT, because it
+    /// is the one whose motion has been watched and approved. Anchors is the
+    /// three-contact model from F20, which is the better description and has
+    /// not yet earned the default. See docs/07-FINDINGS.md F21.
+    /// </summary>
+    public enum PivotModel { Classic = 0, Anchors = 1 }
+
     /// <summary>Which local axis runs down the bore. Found by experiment, like the invert toggles.</summary>
     public enum BoreAxis { X = 0, Y = 1, Z = 2 }
 
@@ -49,7 +60,7 @@ namespace SPTFreeAim.Core
         public float LeftHandAhead;
 
         /// <summary>
-        /// How far the braced contact is allowed to give, 0..1.
+        /// How far the braced contact is allowed to give, -0.5..0.5.
         ///
         /// Zero is a perfectly rigid brace: the grip (or the stock) does not move
         /// at all and the muzzle swings the whole arc. Real bracing is not rigid,
@@ -59,7 +70,8 @@ namespace SPTFreeAim.Core
         /// invented offset can (docs/07-FINDINGS.md F5).
         ///
         /// Small values only. At 1 the pivot lands on the support hand and the
-        /// gun swings about the wrong end entirely.
+        /// gun swings about the wrong end entirely. Negative is legitimate and
+        /// slides it the other way, past the grip toward the buttpad.
         /// </summary>
         public float Leeway;
 
@@ -147,7 +159,15 @@ namespace SPTFreeAim.Core
         public Vector3 Pivot(float shoulderBlend)
         {
             Vector3 braced = Vector3.Lerp(Grip, Stock, Mathf.Clamp01(shoulderBlend));
-            return Vector3.Lerp(braced, LeftHand, Mathf.Clamp01(Leeway));
+
+            // Unclamped on purpose. Vector3.Lerp clamps t to 0..1, which would
+            // silently swallow a negative leeway - and negative is meaningful
+            // here: it slides the centre of rotation the other way, past the grip
+            // toward the buttpad, which braces harder than rigid.
+            return new Vector3(
+                braced.x + (LeftHand.x - braced.x) * Leeway,
+                braced.y + (LeftHand.y - braced.y) * Leeway,
+                braced.z + (LeftHand.z - braced.z) * Leeway);
         }
 
         public static Vector3 AxisVector(BoreAxis axis, bool invert)

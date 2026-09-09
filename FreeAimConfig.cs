@@ -32,7 +32,11 @@ namespace SPTFreeAim
         public ConfigEntry<float> AimCoupling;
         public ConfigEntry<float> DisengageBoost;
 
-        // ---- Anchors (replaces the single pivot) --------------------------
+        // ---- Pivot -------------------------------------------------------
+        public ConfigEntry<PivotModel> PivotModelChoice;
+        public ConfigEntry<Vector3> PivotOffset;
+
+        // ---- Anchors (the F20 model, opt-in) -----------------------------
         public ConfigEntry<bool> UseMeasuredGeometry;
         public ConfigEntry<bool> TurnAboutMeasuredBore;
         public ConfigEntry<Vector3> AnchorGrip;
@@ -169,6 +173,30 @@ namespace SPTFreeAim
                 "down, reload, sprint). Stops the offset lingering through an animation.",
                 new AcceptableValueRange<float>(0f, 20f)));
 
+            // -- pivot --
+            PivotModelChoice = cfg.Bind(S_PIVOT, "Pivot model", PivotModel.Classic, new ConfigDescription(
+                "CLASSIC is the original, and the default. One pivot point, the value you tuned in " +
+                "the first pass, applied identically in every stance. This is the code path that " +
+                "matched Bodycam from 514b815 to 42b74a5.\n" +
+                "\n" +
+                "ANCHORS is the F20 model: three contacts, with the pivot sliding from the grip to " +
+                "the buttpad as you shoulder the weapon, optionally measured off the gun itself. " +
+                "It is the more faithful description of how a rifle is actually held and it is NOT " +
+                "the default, because the motion it produces has not been approved yet.\n" +
+                "\n" +
+                "Switch to Anchors deliberately, fly one raid, and switch back if it is worse. " +
+                "docs/07-FINDINGS.md F21."));
+
+            PivotOffset = cfg.Bind(S_PIVOT, "Pivot offset", new Vector3(0f, 0.1f, 0f),
+                "CLASSIC MODEL. Where the weapon hinges, as a point in the weapon root's local " +
+                "space. Negative components are fine and expected - the grip is behind and below " +
+                "the root on most weapons.\n" +
+                "\n" +
+                "Measured in Bodycam the gun hinges about the FIRING HAND, the grip and trigger, " +
+                "and the buttstock swings away from the body (docs/07-FINDINGS.md F12). To find it: " +
+                "set cone to 25 so the swing is obvious, change one component at a time, and watch " +
+                "which part of the weapon stays still.");
+
             // -- anchors --
             UseMeasuredGeometry = cfg.Bind(S_PIVOT, "Measure the weapon", true,
                 "Read the bore, grip and buttpad off the weapon in your hands instead of using the " +
@@ -233,8 +261,9 @@ namespace SPTFreeAim
                 "About 0.30 m with a normal C-clamp hold, less on a short handguard.\n" +
                 "\n" +
                 "The support hand is the driving end - it is what the mouse moves - and it sits on " +
-                "the bore line, which is why the cant rolls about it.",
-                new AcceptableValueRange<float>(0f, 1f)));
+                "the bore line, which is why the cant rolls about it. Negative points it back " +
+                "toward the stock.",
+                new AcceptableValueRange<float>(-1f, 1f)));
 
             AnchorLeeway = cfg.Bind(S_PIVOT, "Anchor leeway", 0f, new ConfigDescription(
                 "How much the braced contact gives, 0..1.\n" +
@@ -242,8 +271,9 @@ namespace SPTFreeAim
                 "Zero is a perfectly rigid brace: the grip does not move at all. Real bracing is " +
                 "not rigid - there is a little travel when you turn - so the centre of rotation " +
                 "slides slightly toward the driving hand. Small values only; at 1 the gun swings " +
-                "about the wrong end entirely.",
-                new AcceptableValueRange<float>(0f, 0.5f)));
+                "about the wrong end entirely. Negative slides it the other way, past the grip " +
+                "toward the buttpad, which braces harder than rigid.",
+                new AcceptableValueRange<float>(-0.5f, 0.5f)));
 
             InwardConeScale = cfg.Bind(S_PIVOT, "Inward cone scale", 1f, new ConfigDescription(
                 "How much of the cone survives on the side the buttstock cannot swing to.\n" +
@@ -459,8 +489,8 @@ namespace SPTFreeAim
                 "whether the write stuck and whether the view actually moved. If it stuck, " +
                 "Intercept mode is viable and docs/02-PLAN.md step 03 is far cheaper than budgeted.");
             ProbeWriteDegrees = cfg.Bind(S_DEBUG, "Yaw write probe amount (deg)", 20f, new ConfigDescription(
-                "Large enough to be unmistakable on screen.",
-                new AcceptableValueRange<float>(1f, 90f)));
+                "Large enough to be unmistakable on screen. Negative probes the other direction.",
+                new AcceptableValueRange<float>(-90f, 90f)));
 
             VerboseLogging = cfg.Bind(S_DEBUG, "Verbose logging", false,
                 "Per-frame values to the BepInEx console. Noisy; for short captures only.");
@@ -519,7 +549,8 @@ namespace SPTFreeAim
         /// </summary>
         public WeaponAnchors AnchorSnapshot()
         {
-            bool measured = UseMeasuredGeometry.Value;
+            bool classic = PivotModelChoice.Value == PivotModel.Classic;
+            bool measured = UseMeasuredGeometry.Value && !classic;
 
             // Measured beats configured, per member, rather than all or nothing.
             // A pistol has a real grip and a real sight line but no buttstock, and
@@ -531,7 +562,11 @@ namespace SPTFreeAim
 
             return new WeaponAnchors
             {
-                Grip = useGrip ? WeaponGeometry.Grip : AnchorGrip.Value,
+                // In Classic the anchors still exist, because the cant needs a point
+                // to roll about - but the pivot is the classic offset and nothing
+                // derived can move it.
+                Grip = classic ? PivotOffset.Value
+                               : (useGrip ? WeaponGeometry.Grip : AnchorGrip.Value),
                 Bore = useBore ? WeaponGeometry.Bore
                                : WeaponAnchors.AxisVector(BoreAxisChoice.Value, BoreAxisInvert.Value),
                 StockBehind = StockBehindGrip.Value,
