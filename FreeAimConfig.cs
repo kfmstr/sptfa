@@ -141,8 +141,13 @@ namespace SPTFreeAim
                 new AcceptableValueRange<float>(0f, 20f)));
 
             // -- pivot --
-            Hinge = cfg.Bind(S_PIVOT, "Hinge mode", HingeMode.AroundGrip, new ConfigDescription(
-                "AROUND GRIP is the physical one, and the default. The right hand holds the pistol " +
+            Hinge = cfg.Bind(S_PIVOT, "Hinge mode", HingeMode.LegacyEuler, new ConfigDescription(
+                "LEGACY EULER is the original call and the DEFAULT - it is what was working in the\n" +
+                "early builds, and the reason it stopped is documented in F23: the stance poses\n" +
+                "rotate WeaponRoot, which is the parent frame this call reads. Those pose rotations\n" +
+                "are now suppressed while this mode is selected, so it behaves as it did then.\n" +
+                "\n" +
+                "AROUND GRIP is the physical one. The right hand holds the pistol " +
                 "grip, the mouse moves the support hand, the weapon is the rigid link between them, " +
                 "so it turns about the grip and the muzzle swings. Yaw about the world vertical, " +
                 "pitch about the camera's right - the axes those words actually mean.\n" +

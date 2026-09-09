@@ -173,6 +173,7 @@ namespace SPTFreeAim.Patches
             if (doWeapon) { ApplyWeaponOffset(pwa, applied, cfg); GuardWeapon.EndFrame(weaponRootAnim); }
             if (doPose) { ApplyLoweredPose(pwa, p, dt); ApplyReadyPose(pwa, p, dt); GuardPose.EndFrame(weaponRoot); }
 
+            ReportParentageOnce(weaponRootAnim, weaponRoot);
             ReportGuardsOnce();
         }
 
@@ -338,6 +339,44 @@ namespace SPTFreeAim.Patches
         /// <summary>Last world pivot used, for the HUD.</summary>
         public static Vector3 LastPivot;
 
+        private static bool _warnedPoseRot;
+        private static void WarnPoseRotationSuppressed()
+        {
+            if (_warnedPoseRot) return;
+            _warnedPoseRot = true;
+            Plugin.Log.LogWarning(
+                "Stance pose ROTATION is being ignored, on purpose. It writes WeaponRoot's rotation, " +
+                "which is the parent frame the legacy hinge reads, so applying it silently re-aims " +
+                "every offset (docs/07-FINDINGS.md F23). Position offsets still apply. Switch Hinge " +
+                "mode to Around Grip if you want pose rotations back.");
+        }
+
+        /// <summary>
+        /// Is WeaponRootAnim actually a descendant of WeaponRoot? F23 turns on
+        /// this being true, and it is one line to check rather than assume - the
+        /// habit that should have been applied to LocalRotateAround itself.
+        /// </summary>
+        public static string ParentageReport = "not checked yet";
+        private static bool _parentageChecked;
+        private static void ReportParentageOnce(Transform anim, Transform root)
+        {
+            if (_parentageChecked || anim == null || root == null) return;
+            _parentageChecked = true;
+
+            int depth = 0;
+            bool descends = false;
+            for (Transform t = anim.parent; t != null && depth < 12; t = t.parent, depth++)
+                if (ReferenceEquals(t, root)) { descends = true; break; }
+
+            ParentageReport = descends
+                ? "WeaponRootAnim IS under WeaponRoot (" + depth + " up) - F23 applies"
+                : "WeaponRootAnim is NOT under WeaponRoot - F23 does not apply here";
+            Plugin.Log.LogInfo("Transform parentage: " + ParentageReport
+                + "   anim.parent=" + (anim.parent == null ? "none" : anim.parent.name)
+                + "  root=" + root.name);
+        }
+
+
         /// <summary>
         /// Lowered-weapon pose. A position and rotation offset from the stock
         /// weapon-up pose, lerped rather than snapped. The values are ours and
@@ -356,11 +395,16 @@ namespace SPTFreeAim.Patches
 
             root.localPosition += _loweredPos;
 
-            Quaternion add = Quaternion.identity;
-            add.x = _loweredRot.x;
-            add.y = _loweredRot.y;
-            add.z = _loweredRot.z;
-            root.localRotation *= add;
+            // Position on the parent is harmless. ROTATION on it is not, and this
+            // is the whole of F23: LocalRotateAround reads
+            // WeaponRootAnim.parent.TransformDirection, and WeaponRoot IS that
+            // parent. Turning it re-aims every offset the mouse produces, which
+            // is how a working build quietly stopped working when stance poses
+            // arrived. Suppressed while the legacy hinge is in use.
+            if (p.Cfg.Hinge.Value != HingeMode.LegacyEuler)
+                root.localRotation *= Quaternion.Euler(_loweredRot);
+            else
+                WarnPoseRotationSuppressed();
         }
 
         /// <summary>
@@ -392,11 +436,16 @@ namespace SPTFreeAim.Patches
 
             root.localPosition += _readyPos;
 
-            Quaternion add = Quaternion.identity;
-            add.x = _readyRot.x;
-            add.y = _readyRot.y;
-            add.z = _readyRot.z;
-            root.localRotation *= add;
+            // Position on the parent is harmless. ROTATION on it is not, and this
+            // is the whole of F23: LocalRotateAround reads
+            // WeaponRootAnim.parent.TransformDirection, and WeaponRoot IS that
+            // parent. Turning it re-aims every offset the mouse produces, which
+            // is how a working build quietly stopped working when stance poses
+            // arrived. Suppressed while the legacy hinge is in use.
+            if (p.Cfg.Hinge.Value != HingeMode.LegacyEuler)
+                root.localRotation *= Quaternion.Euler(_readyRot);
+            else
+                WarnPoseRotationSuppressed();
         }
     }
 }

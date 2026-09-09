@@ -64,6 +64,7 @@ namespace SPTFreeAim.Debugging
                               FreeAimPatches.LastPivot.x, FreeAimPatches.LastPivot.y,
                               FreeAimPatches.LastPivot.z, cfg.GripFromEye.Value)
                         : "<color=#ffcc55>LEGACY EULER</color>  (F22 - reinterprets the axes)") +
+                Row("parentage", FreeAimPatches.ParentageReport) +
                 Row("cone / cap", string.Format("{0:F1} / {1:F1} deg", cfg.ConeDegrees.Value, cfg.CapDegrees.Value)) +
                 Row("k / push", string.Format("{0:F1} / {1:F2}", cfg.SpringK.Value, cfg.PushFactor.Value)) +
                 Row("gate", string.Format("{0:F2}   {1}", st.Gate, p.Stance)) +

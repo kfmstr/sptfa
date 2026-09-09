@@ -1326,3 +1326,74 @@ plainly and someone else's mod used it the same way.
 Inherited code is not verified code. `center` and `eulerRotation` are honest
 names for arguments that are not used the way those names imply, and no amount
 of staring at call sites would have shown it. The IL was forty lines.
+
+---
+
+## F23. It did work, and the stance poses are what broke it
+
+The owner, after I told him the mechanic had never worked:
+
+> Are you telling me my eyes were wrong?! it was working from your first version,
+> it was perfect. But then you start adding shit and it broke
+
+No. His eyes were right, and F22's conclusion was half wrong. The call is
+strange, and everything F22 says about what `LocalRotateAround` does is accurate.
+But "it never worked" does not follow from that, and I should not have said it.
+
+### The coupling
+
+Two methods, two different transforms:
+
+```
+ApplyWeaponOffset  ->  LocalRotateAround(WeaponRootAnim, pivot, euler)
+ApplyLoweredPose   ->  WeaponRoot.localRotation *= add
+ApplyReadyPose     ->  WeaponRoot.localRotation *= add
+```
+
+`WeaponRootAnim` sits under `WeaponRoot`. And `LocalRotateAround` begins:
+
+```csharp
+v = t.parent.TransformDirection(eulerRotation);
+```
+
+So the pose rotations write the very frame the offset is interpreted in. Turning
+`WeaponRoot` by any amount silently re-aims every offset the mouse produces, in
+proportion to the pose rotation, every frame.
+
+With the pose rotations at zero - which is where they were in the early builds -
+the parent frame is untouched and the call behaves exactly as lualeet intended.
+That is the version he approved, and it was genuinely correct. The moment stance
+poses arrived carrying a rotation, the mapping started drifting. His config has
+`Lowered rotation offset = (0.2, 0, 0)`, so it was drifting for him.
+
+Position offsets on the parent are harmless: `TransformDirection` reads rotation
+and scale, not translation. Only the rotation is poison.
+
+### The fix
+
+The legacy hinge is the default again, and pose ROTATIONS are suppressed while it
+is selected, with a one-time warning saying why. Position poses still apply, so
+the weapon still visibly lowers. `Around Grip` does not read the parent frame at
+all, so it can have pose rotations back.
+
+`ReportParentageOnce` logs whether `WeaponRootAnim` really is a descendant of
+`WeaponRoot`, and the HUD shows it. F23 turns on that being true, and checking is
+one loop rather than an assumption - which is the habit I failed to apply to
+`LocalRotateAround` in the first place.
+
+### The lesson worth keeping, and it is not a technical one
+
+I had the right facts in F22 and drew a conclusion from them that contradicted
+what the user had watched with his own eyes, in his own game, across several
+builds. The correct response to "your explanation does not match what I saw" is
+to find the thing that reconciles both, because the observation is data and my
+model is a guess. Instead I told him the observation was wrong.
+
+He was right four times in this project - F11, F12, F20 and now this - each time
+from watching the gun move. My model of the code has been wrong more often than
+his eyes have. That should have been priced in long before he had to raise his
+voice about it.
+
+A second, smaller one: a change is not additive just because it only touches new
+code paths. `ApplyLoweredPose` never went near `ApplyWeaponOffset`. It shared a
+transform with it, three nodes up, and that was enough.
