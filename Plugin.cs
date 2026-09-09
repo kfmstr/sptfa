@@ -83,7 +83,6 @@ namespace SPTFreeAim
 
             FreeAimPatches.Apply(_harmony = new Harmony(GUID));
             RecoilPatch.Apply(_harmony);
-            SightSwitchPatch.Apply(_harmony);
 
             Log.LogInfo(NAME + " " + VERSION + " loaded. Mode: " + Cfg.Mode.Value +
                         ". F12 to configure, F8 master toggle, F9 HUD, F10 write probe.");
@@ -96,17 +95,6 @@ namespace SPTFreeAim
             if (Cfg.ToggleKey.Value.IsDown())
             {
                 Cfg.Enabled.Value = !Cfg.Enabled.Value;
-
-                // Turning it back on also clears an emergency disable. Previously
-                // that flag was permanent for the session, so after a crash the
-                // toggle looked dead and the only recovery was restarting the
-                // raid - which is how F19 read as "then nothing works".
-                if (Cfg.Enabled.Value && _emergencyDisabled)
-                {
-                    _emergencyDisabled = false;
-                    Log.LogInfo("Clearing the emergency disable and retrying.");
-                }
-
                 Log.LogInfo("Free aim " + (Cfg.Enabled.Value ? "ON" : "OFF"));
                 if (!Cfg.Enabled.Value) ResetState();
             }
@@ -121,8 +109,7 @@ namespace SPTFreeAim
 
             if (Cfg.StanceGateEnabled.Value)
             {
-                Stance.ReadInput(Cfg.StanceKey.Value, Cfg.StanceHoldToReady.Value,
-                                 Cfg.HighReadyKey.Value, Cfg.HighReadyEnabled.Value);
+                Stance.ReadInput(Cfg.StanceKey.Value, Cfg.StanceHoldToReady.Value);
                 Stance.ReadAutoState(
                     FreeAimPatches.LocalPlayer,
                     Cfg.SuspendOnSprint.Value,
@@ -183,8 +170,7 @@ namespace SPTFreeAim
         public void EmergencyDisable()
         {
             _emergencyDisabled = true;
-            Log.LogError("SPT Free Aim disabled after an error. Press the master toggle (F8) " +
-                         "twice to clear it and retry - no need to restart the raid.");
+            Log.LogError("SPT Free Aim disabled for this session. Re-enable by restarting the raid.");
         }
 
         private void OnDestroy()

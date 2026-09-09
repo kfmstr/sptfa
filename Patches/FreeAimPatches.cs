@@ -61,7 +61,6 @@ namespace SPTFreeAim.Patches
         /// <summary>Called when the local player changes, so no stale base survives a raid.</summary>
         public static void ForgetGuards()
         {
-            WeaponGeometry.Forget();
             GuardWeapon.Forget();
             GuardCamera.Forget();
             GuardPose.Forget();
@@ -120,24 +119,8 @@ namespace SPTFreeAim.Patches
 
             Vector2 raw = new Vector2(GameRefs.GetYaw(mc), GameRefs.GetPitch(mc));
 
-            // Stance first: it decides the pose, the coupling target and the aim
-            // blend, and the drive loop needs all three.
-            p.Stance.Update(GameRefs.GetIsAiming(pwa), dt, cfg.StanceSnapshot(), cfg.StanceGateEnabled.Value);
-            st.SetAimBlend(p.Stance.AimBlend);
-            st.UpdateGate(p.Stance.Coupling, dt, cfg.GateSpeed.Value);
-
-            // Stamina and ADS speed are optional extras. A failure in either must
-            // not take the coupling down with it - that is exactly what happened
-            // in F19, where one reflection lookup killed the whole mod mid-raid.
-            // Each disables only itself.
-            try { ApplyStanceConsequences(pwa, p, cfg); }
-            catch (Exception e)
-            {
-                Plugin.Log.LogError("Stance consequences failed; switching those two off " +
-                                    "and carrying on with the coupling: " + e);
-                cfg.StanceStaminaEnabled.Value = false;
-                cfg.AdsSpeedFromWeight.Value = false;
-            }
+            st.UpdateAimBlend(GameRefs.GetIsAiming(pwa), dt);
+            st.UpdateGate(p.Stance.WeaponReady || !cfg.StanceGateEnabled.Value, dt, cfg.GateSpeed.Value);
 
             // The weapon's own recoil, routed to the gun bearing rather than the
             // camera (docs/07-FINDINGS.md F12.3). Read before Step so the HUD and
@@ -152,8 +135,6 @@ namespace SPTFreeAim.Patches
                 st.RecoilOffset = new Vector2(rYaw * scale.x, rPitch * scale.y);
             }
             else st.RecoilOffset = Vector2.zero;
-
-            st.UpdateRoll(dt, cfg.CantSpeed.Value);
 
             FreeAimState.Tuning tuning = cfg.Snapshot();
             Vector2? writeBack = st.Step(raw, dt, tuning);
@@ -189,8 +170,8 @@ namespace SPTFreeAim.Patches
             if (doPose) GuardPose.BeginFrame(weaponRoot); else GuardPose.Release(weaponRoot);
 
             if (doCamera) { ApplyCameraOffset(pwa, -applied); GuardCamera.EndFrame(cameraTransform); }
-            if (doWeapon) { ApplyWeaponOffset(pwa, applied, cfg, p); GuardWeapon.EndFrame(weaponRootAnim); }
-            if (doPose) { ApplyStancePose(pwa, p); GuardPose.EndFrame(weaponRoot); }
+            if (doWeapon) { ApplyWeaponOffset(pwa, applied, cfg); GuardWeapon.EndFrame(weaponRootAnim); }
+            if (doPose) { ApplyLoweredPose(pwa, p, dt); ApplyReadyPose(pwa, p, dt); GuardPose.EndFrame(weaponRoot); }
 
             ReportGuardsOnce();
         }
@@ -246,8 +227,8 @@ namespace SPTFreeAim.Patches
         }
 
         /// <summary>
-        /// The apply step, derived from lualeet/sptarkov-deadzone (Unlicense) via
-        /// lualeet's deadzone mod (Unlicense). Rotate the weapon root about
+        /// The apply step, derived from lualeet/sptarkov-deadzone (Unlicense).
+        /// Rotate the weapon root about
         /// a pivot set back from the muzzle so the gun swings about roughly the
         /// shoulder rather than spinning about its middle.
         ///
@@ -257,8 +238,7 @@ namespace SPTFreeAim.Patches
         /// this - they exist precisely because this mapping has to be found by
         /// experiment on each game version.
         /// </summary>
-        private static void ApplyWeaponOffset(ProceduralWeaponAnimation pwa, Vector2 offset,
-                                              FreeAimConfig cfg, Plugin p)
+        private static void ApplyWeaponOffset(ProceduralWeaponAnimation pwa, Vector2 offset, FreeAimConfig cfg)
         {
             Transform root = GameRefs.GetWeaponRootAnim(pwa);
             if (root == null) return;
@@ -267,145 +247,88 @@ namespace SPTFreeAim.Patches
             float pitch = cfg.InvertPitch.Value ? -offset.y : offset.y;
             if (cfg.SwapAxes.Value) { float t = yaw; yaw = pitch; pitch = t; }
 
-            // The pivot is a point in the weapon root's local space, and it MOVES.
+            // The pivot is a full 3D point in the weapon root's local space, not a
+            // distance along one axis.
             //
-            // docs/02-PLAN.md said to rotate about roughly the shoulder. F12
-            // corrected that to the firing hand. Both were half right, and F20 is
-            // why: the pivot is wherever the weapon is braced, and what braces it
-            // changes with the stance. Held at the ready that is the right hand on
-            // the grip; once the buttstock is in the shoulder pocket it is the
-            // buttpad.
-            //
-            // The blend is the aim blend, not a setting of its own. "If aiming,
-            // the buttstock is always on the shoulder" is a rule rather than a
-            // preference, so there is nothing here to tune.
-            WeaponGeometry.EnsureMeasured(root);
+            // docs/02-PLAN.md said to rotate "about roughly the shoulder". That is
+            // wrong: measured in Bodycam, the gun hinges about the FIRING HAND -
+            // the grip and trigger - and the buttstock swings away from the body.
+            // See docs/07-FINDINGS.md F12. A single up-axis distance cannot place
+            // a pivot at the grip, which is why this takes a Vector3.
+            Vector3 pivot = cfg.PivotOffset.Value;
 
-            WeaponAnchors anchors = cfg.AnchorSnapshot();
-
-            // CLASSIC is the default and it is deliberately the plain thing: one
-            // configured point, applied identically in every stance, exactly as
-            // 514b815 did it. Nothing measured, nothing derived, nothing that
-            // moves with the aim blend. That is the version whose motion matched
-            // Bodycam, and it stays reachable in one dropdown. F21.
-            Vector3 pivot = cfg.PivotModelChoice.Value == PivotModel.Classic
-                ? cfg.PivotOffset.Value
-                : anchors.Pivot(p.State.AimBlend);
-
-            // Vector3(pitch, 0, yaw) - lualeet's mapping onto the weapon root's
-            // local X and Z. THIS IS THE ONE THAT MATCHES BODYCAM. It survived
-            // unchanged from 514b815 to 42b74a5 and the owner's verdict on it was
-            // "that is right, it was the pivot. super."
-            //
-            // I replaced it with a frame built from the measured bore on the
-            // theory that X and Z could not be across the barrel. The theory was
-            // reasonable and the history says it is wrong: those axes had been
-            // producing the correct motion for seven commits. See F21.
-            //
-            // The frame version is kept behind a switch, off, because it may yet
-            // be the better answer on a weapon whose root is oriented oddly - but
-            // it is not the default, and it does not get to be the default again
-            // without someone watching the gun move.
-            Vector3 euler;
-            if (cfg.TurnAboutMeasuredBore.Value)
-            {
-                Vector3 right, up;
-                anchors.Frame(out right, out up);
-                Quaternion q = Quaternion.AngleAxis(yaw, up) * Quaternion.AngleAxis(-pitch, right);
-                euler = q.eulerAngles;
-            }
-            else
-            {
-                euler = new Vector3(pitch, 0f, yaw);
-            }
-
-            GameRefs.LocalRotateAround(root, pivot, euler);
+            GameRefs.LocalRotateAround(root, pivot, new Vector3(pitch, 0f, yaw));
 
             // Without this second call the pivot is left displaced and every
             // offset applied after ours is wrong. lualeet's comment, and it is
             // correct - do not remove it as dead code.
             GameRefs.LocalRotateAround(root, -pivot, Vector3.zero);
-
-            ApplyCant(root, anchors, p);
         }
 
-        /// <summary>
-        /// Roll about the bore: the weapon's third rotational freedom (F20).
-        ///
-        /// Rolled about the SUPPORT HAND, not the grip, because that is where the
-        /// bore line is held. Canting about the grip would swing the muzzle
-        /// sideways as well as rolling it, which is not what tipping a rifle over
-        /// feels like.
-        ///
-        /// Scaled by the gate so a lowered weapon is not left canted in the hand.
-        /// The commanded angle survives, so raising it again restores the cant.
-        /// </summary>
-        private static void ApplyCant(Transform root, WeaponAnchors anchors, Plugin p)
-        {
-            if (!p.Cfg.CantEnabled.Value) return;
-
-            float roll = p.State.Roll * p.State.Gate;
-            if (Mathf.Abs(roll) < 0.01f) return;
-
-            // About the measured bore, which is what "roll" means. Passing the
-            // bore vector scaled by the angle would only be a rotation if the
-            // bore were an axis-aligned unit vector, which it is not once it is
-            // measured off a real weapon.
-            Vector3 rollPivot = anchors.LeftHand;
-            Quaternion q = Quaternion.AngleAxis(roll, anchors.Bore);
-            GameRefs.LocalRotateAround(root, rollPivot, q.eulerAngles);
-            GameRefs.LocalRotateAround(root, -rollPivot, Vector3.zero);
-        }
+        private static Vector3 _loweredPos;
+        private static Vector3 _loweredRot;
+        private static Vector3 _readyPos;
+        private static Vector3 _readyRot;
 
         /// <summary>
-        /// Apply the stance's pose. The lerp lives in StanceState, so this is
-        /// just the write - which keeps the "where should the weapon be" decision
-        /// in one place instead of spread across two pose methods that each
-        /// lerped their own copy.
+        /// Lowered-weapon pose. A position and rotation offset from the stock
+        /// weapon-up pose, lerped rather than snapped. The values are ours and
+        /// start at zero - see docs/07-FINDINGS.md F16.
         /// </summary>
-        private static void ApplyStancePose(ProceduralWeaponAnimation pwa, Plugin p)
+        private static void ApplyLoweredPose(ProceduralWeaponAnimation pwa, Plugin p, float dt)
         {
             Transform root = GameRefs.GetWeaponRoot(pwa);
             if (root == null) return;
 
-            root.localPosition += p.Stance.PosePos;
+            bool down = !p.Stance.WeaponReady;
+            float speed = p.Cfg.LoweredLerpSpeed.Value * dt;
 
-            // Quaternion.Euler, not three components poked into an identity
-            // quaternion. That older form left w at 1, so the result was not a
-            // unit quaternion and the rotation it described was not the one the
-            // numbers said - harmless while the values were zero, wrong the
-            // moment anybody tuned them.
-            root.localRotation *= Quaternion.Euler(p.Stance.PoseRot);
+            _loweredPos = Vector3.Lerp(_loweredPos, down ? p.Cfg.LoweredPos.Value : Vector3.zero, speed);
+            _loweredRot = Vector3.Lerp(_loweredRot, down ? p.Cfg.LoweredRot.Value : Vector3.zero, speed);
+
+            root.localPosition += _loweredPos;
+
+            Quaternion add = Quaternion.identity;
+            add.x = _loweredRot.x;
+            add.y = _loweredRot.y;
+            add.z = _loweredRot.z;
+            root.localRotation *= add;
         }
 
         /// <summary>
-        /// What the stance costs: arm stamina, and how fast the sights come up.
+        /// The ready stance, as measured in Bodycam: the weapon is NOT shouldered
+        /// at rest. The firing hand is lowered, the gun is held low, and the
+        /// buttstock sits behind the arm rather than in the shoulder pocket.
+        /// Shouldering happens when you aim, and takes a moment.
         ///
-        /// Both work WITH the game's own systems rather than replacing them -
-        /// scaling Tarkov's hands-stamina restore rate and its AimingSpeed, from
-        /// captured stock values so nothing compounds frame to frame.
+        /// Tarkov's default "weapon up" is already shouldered, so reproducing the
+        /// Bodycam ready position means offsetting away from it. Off by default
+        /// (zero offsets) because the right values have to be found by eye and a
+        /// guess here would just be noise - see docs/07-FINDINGS.md F12.
+        ///
+        /// Fades out as you aim, so aiming down sights is unaffected.
         /// </summary>
-        private static void ApplyStanceConsequences(ProceduralWeaponAnimation pwa, Plugin p, FreeAimConfig cfg)
+        private static void ApplyReadyPose(ProceduralWeaponAnimation pwa, Plugin p, float dt)
         {
-            if (cfg.StanceStaminaEnabled.Value)
-                GameRefs.SetHandsRecovery(LocalPlayer, p.Stance.HandsRecovery);
-            else
-                GameRefs.ReleaseHandsRecovery(LocalPlayer);
+            if (!p.Cfg.ReadyPoseEnabled.Value) return;
 
-            if (cfg.AdsSpeedFromWeight.Value)
-            {
-                float w = GameRefs.GetHeldWeaponWeight(LocalPlayer);
-                float reference = Mathf.Max(0.1f, cfg.AdsWeightReference.Value);
-                if (w > 0.01f)
-                {
-                    // Speed scales inversely with weight, softened by strength:
-                    // strength 0 leaves it stock, 1 is the full inverse ratio.
-                    float ratio = reference / w;
-                    float mul = Mathf.Lerp(1f, ratio, Mathf.Clamp01(cfg.AdsWeightStrength.Value));
-                    GameRefs.SetAimingSpeed(pwa, Mathf.Clamp(mul, 0.35f, 2f));
-                }
-            }
-            else GameRefs.ReleaseAimingSpeed(pwa);
+            Transform root = GameRefs.GetWeaponRoot(pwa);
+            if (root == null) return;
+
+            // Only while the weapon is up, and blended out by aiming.
+            float weight = p.State.Gate * (1f - p.State.AimBlend);
+            float speed = p.Cfg.LoweredLerpSpeed.Value * dt;
+
+            _readyPos = Vector3.Lerp(_readyPos, p.Cfg.ReadyPos.Value * weight, speed);
+            _readyRot = Vector3.Lerp(_readyRot, p.Cfg.ReadyRot.Value * weight, speed);
+
+            root.localPosition += _readyPos;
+
+            Quaternion add = Quaternion.identity;
+            add.x = _readyRot.x;
+            add.y = _readyRot.y;
+            add.z = _readyRot.z;
+            root.localRotation *= add;
         }
     }
 }

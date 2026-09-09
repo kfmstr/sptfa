@@ -41,10 +41,6 @@ namespace SPTFreeAim.Debugging
             FreeAimState st = p.State;
             FreeAimConfig cfg = p.Cfg;
             float mag = st.Offset.magnitude;
-            WeaponAnchors anchors = cfg.AnchorSnapshot();
-            Vector3 pivot = cfg.PivotModelChoice.Value == PivotModel.Classic
-                ? cfg.PivotOffset.Value
-                : anchors.Pivot(st.AimBlend);
 
             TrackDecay(mag);
 
@@ -65,47 +61,16 @@ namespace SPTFreeAim.Debugging
                 "\n" +
                 Row("cone / cap", string.Format("{0:F1} / {1:F1} deg", cfg.ConeDegrees.Value, cfg.CapDegrees.Value)) +
                 Row("k / push", string.Format("{0:F1} / {1:F2}", cfg.SpringK.Value, cfg.PushFactor.Value)) +
-                Row("stance", string.Format("{0,-11} gate {1:F2}   arms x{2:F2}",
-                        p.Stance.Current, st.Gate, p.Stance.HandsRecovery)) +
-                Row("stance pose", string.Format("pos {0,5:F2} {1,5:F2} {2,5:F2}   {3}",
-                        p.Stance.PosePos.x, p.Stance.PosePos.y, p.Stance.PosePos.z, p.Stance)) +
+                Row("gate", string.Format("{0:F2}   {1}", st.Gate, p.Stance)) +
                 Row("aim blend", string.Format("{0:F2}   coupling x{1:F2}", st.AimBlend, cfg.AimCoupling.Value)) +
-                "\n" +
-                // The pivot is the thing being tuned now, so show where it
-                // actually is this frame rather than only what was configured.
-                Row("pivot", string.Format("{0,5:F2} {1,5:F2} {2,5:F2}   {3}",
-                        pivot.x, pivot.y, pivot.z,
-                        cfg.PivotModelChoice.Value == PivotModel.Classic
-                            ? "<color=#7fd1b9>CLASSIC</color> - one fixed point"
-                            : "ANCHORS - " + (st.AimBlend > 0.5f ? "toward BUTTPAD" : "toward GRIP"))) +
-                Row("geometry", cfg.PivotModelChoice.Value == PivotModel.Classic
-                        ? "<color=#7fd1b9>not used</color> - Classic pivot model"
-                        : WeaponGeometry.HaveBore
-                        ? "<color=#7fd1b9>measured</color>  bore " + Vec(anchors.Bore)
-                          + (WeaponGeometry.HaveGrip ? "  grip ok" : "  <color=#ffcc55>grip fallback</color>")
-                          + (WeaponGeometry.HaveStock ? "  stock ok" : "  stock derived")
-                        : "<color=#ffcc55>no sight line - using the configured axis</color>") +
-                Row("cone now", string.Format("{0:F1} deg  (set {1:F1}, inward x{2:F2})",
-                        st.EffectiveCone(st.Offset, cfg.Snapshot()), cfg.ConeDegrees.Value,
-                        cfg.InwardConeScale.Value)) +
-                Row("cant", string.Format("{0,5:F1} -> {1,5:F1} deg   axis {2}{3}   {4}",
-                        st.Roll, st.RollTarget, cfg.BoreAxisChoice.Value,
-                        cfg.BoreAxisInvert.Value ? "-" : "+",
-                        SightSwitchPatch.Hooked ? "on change-sight key"
-                                                : "<color=#ffcc55>not hooked</color>")) +
                 "\n" +
                 Row("peak offset", string.Format("{0:F1} deg  ({1:F1}s ago)", _peak, _peakAge)) +
                 Row("convergence", ConvergenceEstimate()) +
                 "\n" +
                 Row("probe (F10)", YawWriteProbe.LastResult);
 
-            GUI.Box(new Rect(10, 10, 560, 392), GUIContent.none, _boxStyle);
-            GUI.Label(new Rect(20, 18, 540, 376), "<b>SPT Free Aim</b>\n\n" + body, _style);
-        }
-
-        private static string Vec(Vector3 v)
-        {
-            return string.Format("({0:F2},{1:F2},{2:F2})", v.x, v.y, v.z);
+            GUI.Box(new Rect(10, 10, 490, 318), GUIContent.none, _boxStyle);
+            GUI.Label(new Rect(20, 18, 470, 302), "<b>SPT Free Aim</b>\n\n" + body, _style);
         }
 
         private static string Row(string label, string value)
