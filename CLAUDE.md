@@ -54,9 +54,12 @@ and the F10 probe answers whether Intercept is available in about a minute. See
 
 ## Hard rules for this project
 
-- **Do not take a runtime dependency on the Realism mod.** It also rewrites
-  ballistics, medical and recoil. Read its source for technique, copy the
-  approach, credit it. Never `require` it.
+- **Do not take a runtime dependency on the Realism mod, and do not copy its
+  code.** It rewrites ballistics, medical and recoil, so depending on it would
+  force all of that on users - and it is licensed CC BY-NC-ND, so copying its
+  source into this mod is not permitted and would rule out the MIT release.
+  Read it for technique, implement independently, credit it. See
+  `docs/07-FINDINGS.md` F15 and `CREDITS.md`.
 - **Keep every reflection lookup in one file.** Every Tarkov client update
   re-obfuscates class names, so an update must mean fixing one place.
 - **Credit `lualeet/sptarkov-deadzone` (MIT)** for the pivot maths, and say in

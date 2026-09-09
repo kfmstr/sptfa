@@ -685,3 +685,77 @@ Two independent halves of step 07, and they compose:
 The first alone gives a still camera and a gun that barely moves. The second
 alone gives a climbing gun with the camera still chasing it. The spec wants
 both.
+
+---
+
+## F15. Realism is CC BY-NC-ND — we cannot copy it, and we already published it
+
+Checked while looking at Realism's stance and aiming code with a view to
+adopting it.
+
+### The licence
+
+`space-commits/SPT-Realism-Mod-Client` ships `License.txt`: **Creative Commons
+Attribution-NonCommercial-NoDerivatives 4.0 International**. No carve-out for
+code anywhere in the repo or README.
+
+**NoDerivatives** is the operative term. It permits sharing the work, and
+forbids distributing adapted versions of it. Copying its stance or aiming code
+into this mod and releasing that mod would distribute an adaptation.
+
+It also forecloses the release plan. `docs/02-PLAN.md` says "MIT is the
+community licence norm" — MIT cannot be applied to a work containing ND
+material. Taking the code would mean giving up the licence we intended to ship
+under, on top of not being permitted.
+
+This sharpens `docs/04-DECISIONS.md` D6, which already said not to depend on
+Realism at runtime because it drags in ballistics, medical and recoil. That was
+a design argument. The licence is a harder constraint on top of it, and it
+extends to source copying, not just runtime dependency.
+
+### What is still fine
+
+Reading it. Copyright restricts copying and adaptation, not comprehension.
+Architecture — "stance wants a state machine rather than a boolean", "a pose is
+a target reached over time" — is an idea, and an independent implementation of
+an idea is not a derivative work.
+
+Facts about *Battlestate's* assembly discovered while reading are not Realism's
+to license either, and everything of that kind in this project was re-verified
+directly against `Assembly-CSharp.dll` (F10) rather than taken on trust.
+
+What we specifically do **not** take is their tuning constants. Beyond the
+licence question, their pose values are tuned against their own animation,
+ergonomics and recoil changes; lifted out of that context they are noise
+wearing the costume of data. F12.2 needs a pose measured against Bodycam, here.
+
+Notes written from the reading are in `reference/REALISM-NOTES.md`.
+
+### The part that was already wrong
+
+3,343 lines of verbatim Realism source were committed to `reference/` in the
+handoff package and **pushed to a public repository** before anyone checked the
+licence. No attribution, no licence text.
+
+Removed from the working tree. Copies kept outside the repo, at
+`Development/_reference-local/`, so the reference value survives.
+
+**This does not fix it.** Git history still contains the files, and the repo is
+public, so they are still being distributed. Actually removing them needs a
+history rewrite:
+
+```
+git filter-repo --path-glob 'reference/realism-*' --invert-paths
+git push --force
+```
+
+That rewrites every commit hash. Worth doing before the repo gets attention,
+and much cheaper now — this project has one contributor and nine commits.
+
+### The lesson
+
+The handoff bundled reference material without recording where it came from or
+under what terms, and it was published without anyone asking. `reference/` now
+carries a note per source. A file dropped into a repo "just for reference" is
+published the moment the repo is, and licences are cheaper to read before a
+push than after.
