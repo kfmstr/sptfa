@@ -61,7 +61,10 @@ namespace SPTFreeAim.Debugging
                 "\n" +
                 Row("cone / cap", string.Format("{0:F1} / {1:F1} deg", cfg.ConeDegrees.Value, cfg.CapDegrees.Value)) +
                 Row("k / push", string.Format("{0:F1} / {1:F2}", cfg.SpringK.Value, cfg.PushFactor.Value)) +
-                Row("gate", string.Format("{0:F2}   {1}", st.Gate, p.Stance)) +
+                Row("stance", string.Format("{0,-11} gate {1:F2}   arms x{2:F2}",
+                        p.Stance.Current, st.Gate, p.Stance.HandsRecovery)) +
+                Row("stance pose", string.Format("pos {0,5:F2} {1,5:F2} {2,5:F2}   {3}",
+                        p.Stance.PosePos.x, p.Stance.PosePos.y, p.Stance.PosePos.z, p.Stance)) +
                 Row("aim blend", string.Format("{0:F2}   coupling x{1:F2}", st.AimBlend, cfg.AimCoupling.Value)) +
                 "\n" +
                 Row("peak offset", string.Format("{0:F1} deg  ({1:F1}s ago)", _peak, _peakAge)) +
@@ -69,8 +72,8 @@ namespace SPTFreeAim.Debugging
                 "\n" +
                 Row("probe (F10)", YawWriteProbe.LastResult);
 
-            GUI.Box(new Rect(10, 10, 490, 318), GUIContent.none, _boxStyle);
-            GUI.Label(new Rect(20, 18, 470, 302), "<b>SPT Free Aim</b>\n\n" + body, _style);
+            GUI.Box(new Rect(10, 10, 510, 336), GUIContent.none, _boxStyle);
+            GUI.Label(new Rect(20, 18, 490, 320), "<b>SPT Free Aim</b>\n\n" + body, _style);
         }
 
         private static string Row(string label, string value)

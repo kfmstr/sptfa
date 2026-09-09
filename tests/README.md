@@ -17,7 +17,18 @@ the csproj), so compile them separately:
 ```
 csc /out:spec.exe tests\realmath.cs Core\AngleMath.cs Core\FreeAimState.cs tests\SpecTests.cs
 spec.exe
+
+csc /out:stance.exe tests\realmath.cs tests\stance-stubs.cs Core\Stance.cs Core\StanceState.cs tests\StanceTests.cs
+stance.exe
 ```
+
+Two harnesses. `SpecTests` asserts against the measurements in
+`docs/01-SPEC.md`; `StanceTests` asserts against the stance machine's own rules,
+which are a design decision rather than a measurement.
+
+`stance-stubs.cs` exists because StanceState has two halves - one that reads the
+game and one that decides. Only the second is worth testing, so the reading half
+is stubbed inert and the tests set the suspension flags directly.
 
 `csc.exe` ships with Visual Studio - the Developer Command Prompt has it on the
 path. Anything that compiles C# will do; the harness has no dependencies.

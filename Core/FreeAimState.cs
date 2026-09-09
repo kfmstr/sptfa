@@ -216,14 +216,33 @@ namespace SPTFreeAim.Core
             return AngleMath.ClampMagnitude(total, p.CapDegrees) * Gate;
         }
 
+        /// <summary>
+        /// Aim blend is owned by StanceState now (it needs it to pick the stance),
+        /// and mirrored here because the coupling maths and the recoil patch both
+        /// read it. One updater, one source of truth.
+        /// </summary>
+        public void SetAimBlend(float blend) { AimBlend = Mathf.Clamp01(blend); }
+
+        /// <summary>Kept for the spec harness, which has no StanceState.</summary>
         public void UpdateAimBlend(bool isAiming, float dt)
         {
             AimBlend = Mathf.Lerp(AimBlend, isAiming ? 1f : 0f, Mathf.Clamp01(dt * 6f));
         }
 
+        /// <summary>
+        /// Drive the gate toward a continuous coupling target. The stance decides
+        /// the target - Down is 0, the weapon-up stances are 1 by default - so
+        /// this takes a float rather than a bool.
+        /// </summary>
+        public void UpdateGate(float couplingTarget, float dt, float gateSpeed)
+        {
+            Gate = Mathf.MoveTowards(Gate, Mathf.Clamp01(couplingTarget), gateSpeed * dt);
+        }
+
+        /// <summary>Kept so the spec harness and any older call sites still read clearly.</summary>
         public void UpdateGate(bool weaponReady, float dt, float gateSpeed)
         {
-            Gate = Mathf.MoveTowards(Gate, weaponReady ? 1f : 0f, gateSpeed * dt);
+            UpdateGate(weaponReady ? 1f : 0f, dt, gateSpeed);
         }
 
         /// <summary>Plain snapshot of the tuning values, so the loop never reads config directly.</summary>

@@ -851,3 +851,86 @@ was queued to satisfy a requirement that does not exist.
 Neither licence had been read. The handoff asserted both, and the assertions
 propagated into eight files across code and docs before anyone opened either
 `LICENSE`. Reading two files would have cost a minute at the start.
+
+---
+
+## F18. Stances: a state machine, and what each one costs
+
+Implements F12.2 properly, and picks up the parts of Realism's approach that a
+licence cannot restrict (F15) — the shape of the solution, not its code or its
+numbers.
+
+### Three positions, not two
+
+`StanceState` was one bool. F12.2 established that the Bodycam ready is a third
+position: weapon **up but not shouldered**, with shouldering being something
+aiming does. A bool cannot say that, and a second bool would only hide the state
+machine rather than remove it.
+
+| Stance | Weapon | Coupling | When |
+|---|---|---|---|
+| `Down` | lowered | **0** — mouse drives the view (F13) | suspension, or stance key |
+| `LowReady` | up, not shouldered | full | **default**, the Bodycam ready |
+| `HighReady` | compressed hold | full | optional, off by default |
+| `Shouldered` | Tarkov's own pose | full | aiming |
+
+`Shouldered` deliberately carries a **zero** pose offset. The sights are where
+Battlestate put them; the mod decides the coupling, not the sight picture.
+Anything else would fight the game's ADS alignment for no gain.
+
+Priority is suspension > stance key > aiming > high ready > low ready. You
+cannot shoulder a weapon you have lowered, and you cannot shoulder anything
+while sprinting.
+
+### The pose lerp moved into the state machine
+
+There were two pose methods, each lerping its own copy toward its own target.
+Now there is one target chosen by the stance and one lerp. "Where should the
+weapon be" is a single decision in a single place, which is what made
+`HighReady` cost almost nothing to add.
+
+### Arm stamina — the owner's idea, and the game already had it
+
+The suggestion was that holding the weapon up should cost stamina, so that low
+ready is worth using. Correct, and Tarkov already models it: `PhysicalBase`
+carries a **`HandsStamina`** pool separate from the main one, with its own
+`HandsCapacity` and `HandsRestoreRate`.
+
+So the implementation is not a new drain — that would double-count with the
+game's own. Each stance scales how fast the existing pool **recovers**:
+shouldered 0.5x, low ready 1.5x, down 2.5x, from a captured stock value so
+nothing compounds frame to frame.
+
+This is what stops low ready being decoration. Without a cost to holding the
+weapon shouldered, nobody lowers it and the state never gets used.
+
+Off by default: it shifts stamina balance, which is a Tarkov-realism idea rather
+than a Bodycam one — the same class of deliberate divergence as Q2.
+
+Note `Player.Physical` is a **field** of `PhysicalBase`, not a property. Third
+time that has bitten (F10.2, F10.4); `Compat/Member.cs` handles it, which is why
+it cost nothing this time.
+
+### ADS speed from weapon weight
+
+`PWA.AimingSpeed` is writable and `Item.TotalWeight` is readable, so this is a
+read and a scale against a reference weight, softened by a strength factor and
+clamped to 0.35x–2x so nothing becomes unusable. Also off by default — it
+changes handling across every weapon in the game.
+
+### Tests
+
+`tests/StanceTests.cs`, 17 checks, separate from the spec harness because it
+asserts against the machine's own rules rather than against a Bodycam
+measurement.
+
+They check what the machine **decides** — which stance, what coupling, what
+recovery — rather than what is visible downstream. That is the direct lesson of
+F13, where the gate was wired to the output stage, every indicator agreed it
+worked, and the test passed because it asserted the wrong layer.
+
+### Still unmeasured
+
+Every pose value is zero. `LowReady` and `HighReady` do nothing visible until
+someone tunes them by eye against Bodycam — see F16 for why a plausible-looking
+inherited number would be worse than an empty field.

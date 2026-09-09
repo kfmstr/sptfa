@@ -52,6 +52,12 @@ namespace SPTFreeAim
         public ConfigEntry<bool> SuspendOnAnimation;
         public ConfigEntry<bool> SuspendOnStationary;
         public ConfigEntry<bool> ReadyPoseEnabled;
+        public ConfigEntry<KeyboardShortcut> HighReadyKey;
+        public ConfigEntry<bool> HighReadyEnabled;
+        public ConfigEntry<Vector3> HighReadyPos;
+        public ConfigEntry<Vector3> HighReadyRot;
+        public ConfigEntry<float> CouplingLowReady;
+        public ConfigEntry<float> CouplingHighReady;
         public ConfigEntry<Vector3> ReadyPos;
         public ConfigEntry<Vector3> ReadyRot;
 
@@ -62,6 +68,15 @@ namespace SPTFreeAim
         public ConfigEntry<bool> RecoilMovesGun;
         public ConfigEntry<Vector2> RecoilGunScale;
         public ConfigEntry<bool> RecoilSwapAxes;
+
+        // ---- Stance consequences -----------------------------------------
+        public ConfigEntry<bool> StanceStaminaEnabled;
+        public ConfigEntry<float> HandsRecoveryShouldered;
+        public ConfigEntry<float> HandsRecoveryLowReady;
+        public ConfigEntry<float> HandsRecoveryDown;
+        public ConfigEntry<bool> AdsSpeedFromWeight;
+        public ConfigEntry<float> AdsWeightReference;
+        public ConfigEntry<float> AdsWeightStrength;
 
         // ---- Debug -------------------------------------------------------
         public ConfigEntry<bool> ShowHud;
@@ -180,7 +195,7 @@ namespace SPTFreeAim
                 "How fast free aim fades in and out across a stance change.",
                 new AcceptableValueRange<float>(0.5f, 20f)));
 
-            LoweredPoseEnabled = cfg.Bind(S_STANCE, "Apply lowered pose", true,
+            LoweredPoseEnabled = cfg.Bind(S_STANCE, "Apply stance poses", true,
                 "Visually lower the weapon in the down stance. Off leaves the pose alone and only " +
                 "gates free aim.");
             LoweredPos = cfg.Bind(S_STANCE, "Lowered position offset", Vector3.zero,
@@ -225,6 +240,30 @@ namespace SPTFreeAim
             ReadyRot = cfg.Bind(S_STANCE, "Ready rotation offset", Vector3.zero,
                 "Rotation offset for the low-ready stance. UNMEASURED - see above.");
 
+            HighReadyEnabled = cfg.Bind(S_STANCE, "Enable high ready", false,
+                "A compressed intermediate hold between low ready and shouldered - weapon closer " +
+                "to the body, quicker to bring up. NOT in the Bodycam spec: a deliberate " +
+                "divergence, off by default.");
+
+            HighReadyKey = cfg.Bind(S_STANCE, "High ready key", new KeyboardShortcut(KeyCode.C),
+                "Toggles the compressed hold. Only does anything when high ready is enabled.");
+
+            HighReadyPos = cfg.Bind(S_STANCE, "High ready position offset", Vector3.zero,
+                "UNMEASURED. Compressed: weapon pulled in toward the chest, muzzle up rather than " +
+                "down - the opposite direction from low ready.");
+
+            HighReadyRot = cfg.Bind(S_STANCE, "High ready rotation offset", Vector3.zero,
+                "UNMEASURED - see above.");
+
+            CouplingLowReady = cfg.Bind(S_STANCE, "Coupling in low ready", 1f, new ConfigDescription(
+                "Free-aim strength while the weapon is up but not shouldered. 1.0 is full - the " +
+                "spec measures the coupling as identical hip and shouldered.",
+                new AcceptableValueRange<float>(0f, 1f)));
+
+            CouplingHighReady = cfg.Bind(S_STANCE, "Coupling in high ready", 1f, new ConfigDescription(
+                "Free-aim strength in the compressed hold.",
+                new AcceptableValueRange<float>(0f, 1f)));
+
             // -- recoil --
             DecoupleRecoil = cfg.Bind(S_RECOIL, "Decouple recoil", false,
                 "[docs/02-PLAN.md step 07 - NOT IMPLEMENTED YET] Stops the camera being dragged " +
@@ -249,6 +288,44 @@ namespace SPTFreeAim
                 "How much of the weapon's recoil reaches the gun bearing. Negative flips the " +
                 "direction. Zero on an axis disables it. Start at (1, 1) and watch the HUD.");
 
+            StanceStaminaEnabled = cfg.Bind(S_STANCE, "Stance affects arm stamina", false,
+                "Tarkov already has a separate HandsStamina pool that drains while the weapon is " +
+                "up. Rather than adding a second drain that double-counts with it, this scales how " +
+                "fast that pool RECOVERS depending on stance: shouldered recovers slowly, low ready " +
+                "faster, weapon down fastest.\n" +
+                "\n" +
+                "This is what gives low ready a reason to exist. Without a cost to holding the " +
+                "weapon shouldered, nobody lowers it and the stance is decoration.\n" +
+                "\n" +
+                "Off by default: it changes stamina balance, which is a Tarkov-realism idea rather " +
+                "than a Bodycam one. See docs/07-FINDINGS.md F18.");
+
+            HandsRecoveryShouldered = cfg.Bind(S_STANCE, "Arm recovery: shouldered", 0.5f, new ConfigDescription(
+                "Multiplier on the stock hands-stamina restore rate while shouldered. Below 1 " +
+                "recovers slower than stock.", new AcceptableValueRange<float>(0f, 3f)));
+
+            HandsRecoveryLowReady = cfg.Bind(S_STANCE, "Arm recovery: low ready", 1.5f, new ConfigDescription(
+                "Multiplier while the weapon is up but not shouldered.",
+                new AcceptableValueRange<float>(0f, 3f)));
+
+            HandsRecoveryDown = cfg.Bind(S_STANCE, "Arm recovery: weapon down", 2.5f, new ConfigDescription(
+                "Multiplier with the weapon lowered.", new AcceptableValueRange<float>(0f, 3f)));
+
+            AdsSpeedFromWeight = cfg.Bind(S_STANCE, "ADS speed from weapon weight", false,
+                "Heavier weapons take longer to come into the shoulder. Scales the game's own " +
+                "AimingSpeed by weight relative to the reference below. Off by default: it changes " +
+                "handling balance across every weapon.");
+
+            AdsWeightReference = cfg.Bind(S_STANCE, "ADS reference weight (kg)", 3.5f, new ConfigDescription(
+                "A weapon at this weight aims at stock speed. Heavier is slower, lighter faster. " +
+                "3.5 kg is roughly a loaded mid-size rifle.",
+                new AcceptableValueRange<float>(0.5f, 12f)));
+
+            AdsWeightStrength = cfg.Bind(S_STANCE, "ADS weight effect strength", 0.5f, new ConfigDescription(
+                "0 = weight does nothing. 1 = speed scales inversely with weight in full. 0.5 " +
+                "halves the effect, which keeps heavy guns usable.",
+                new AcceptableValueRange<float>(0f, 1f)));
+
             RecoilSwapAxes = cfg.Bind(S_RECOIL, "Recoil swap axes", false,
                 "Flip if the recoil climbs sideways instead of up. The Vector3 the game exposes " +
                 "is a hand rotation, and which component is pitch was never verified.");
@@ -270,6 +347,37 @@ namespace SPTFreeAim
 
             VerboseLogging = cfg.Bind(S_DEBUG, "Verbose logging", false,
                 "Per-frame values to the BepInEx console. Noisy; for short captures only.");
+        }
+
+        /// <summary>
+        /// Stance profiles, rebuilt each frame so F12 edits take effect live.
+        /// Down has zero coupling: that is what makes the mouse drive the view
+        /// with the weapon lowered (F13).
+        /// </summary>
+        public StanceProfiles StanceSnapshot()
+        {
+            float blend = LoweredLerpSpeed.Value;
+            return new StanceProfiles
+            {
+                Down = new StanceProfile {
+                    Pos = LoweredPos.Value, Rot = LoweredRot.Value,
+                    Coupling = 0f, HandsRecovery = HandsRecoveryDown.Value, BlendSpeed = blend },
+
+                LowReady = new StanceProfile {
+                    Pos = ReadyPoseEnabled.Value ? ReadyPos.Value : Vector3.zero,
+                    Rot = ReadyPoseEnabled.Value ? ReadyRot.Value : Vector3.zero,
+                    Coupling = CouplingLowReady.Value, HandsRecovery = HandsRecoveryLowReady.Value, BlendSpeed = blend },
+
+                HighReady = new StanceProfile {
+                    Pos = HighReadyPos.Value, Rot = HighReadyRot.Value,
+                    Coupling = CouplingHighReady.Value, HandsRecovery = HandsRecoveryLowReady.Value, BlendSpeed = blend },
+
+                // Shouldered is Tarkov's own pose - zero offset. The sights are
+                // where the game puts them; we only decide the coupling.
+                Shouldered = new StanceProfile {
+                    Pos = Vector3.zero, Rot = Vector3.zero,
+                    Coupling = 1f, HandsRecovery = HandsRecoveryShouldered.Value, BlendSpeed = blend },
+            };
         }
 
         public FreeAimState.Tuning Snapshot()

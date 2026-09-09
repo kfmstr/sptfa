@@ -109,7 +109,8 @@ namespace SPTFreeAim
 
             if (Cfg.StanceGateEnabled.Value)
             {
-                Stance.ReadInput(Cfg.StanceKey.Value, Cfg.StanceHoldToReady.Value);
+                Stance.ReadInput(Cfg.StanceKey.Value, Cfg.StanceHoldToReady.Value,
+                                 Cfg.HighReadyKey.Value, Cfg.HighReadyEnabled.Value);
                 Stance.ReadAutoState(
                     FreeAimPatches.LocalPlayer,
                     Cfg.SuspendOnSprint.Value,

@@ -119,8 +119,13 @@ namespace SPTFreeAim.Patches
 
             Vector2 raw = new Vector2(GameRefs.GetYaw(mc), GameRefs.GetPitch(mc));
 
-            st.UpdateAimBlend(GameRefs.GetIsAiming(pwa), dt);
-            st.UpdateGate(p.Stance.WeaponReady || !cfg.StanceGateEnabled.Value, dt, cfg.GateSpeed.Value);
+            // Stance first: it decides the pose, the coupling target and the aim
+            // blend, and the drive loop needs all three.
+            p.Stance.Update(GameRefs.GetIsAiming(pwa), dt, cfg.StanceSnapshot(), cfg.StanceGateEnabled.Value);
+            st.SetAimBlend(p.Stance.AimBlend);
+            st.UpdateGate(p.Stance.Coupling, dt, cfg.GateSpeed.Value);
+
+            ApplyStanceConsequences(pwa, p, cfg);
 
             // The weapon's own recoil, routed to the gun bearing rather than the
             // camera (docs/07-FINDINGS.md F12.3). Read before Step so the HUD and
@@ -171,7 +176,7 @@ namespace SPTFreeAim.Patches
 
             if (doCamera) { ApplyCameraOffset(pwa, -applied); GuardCamera.EndFrame(cameraTransform); }
             if (doWeapon) { ApplyWeaponOffset(pwa, applied, cfg); GuardWeapon.EndFrame(weaponRootAnim); }
-            if (doPose) { ApplyLoweredPose(pwa, p, dt); ApplyReadyPose(pwa, p, dt); GuardPose.EndFrame(weaponRoot); }
+            if (doPose) { ApplyStancePose(pwa, p); GuardPose.EndFrame(weaponRoot); }
 
             ReportGuardsOnce();
         }
@@ -265,70 +270,54 @@ namespace SPTFreeAim.Patches
             GameRefs.LocalRotateAround(root, -pivot, Vector3.zero);
         }
 
-        private static Vector3 _loweredPos;
-        private static Vector3 _loweredRot;
-        private static Vector3 _readyPos;
-        private static Vector3 _readyRot;
-
         /// <summary>
-        /// Lowered-weapon pose. A position and rotation offset from the stock
-        /// weapon-up pose, lerped rather than snapped. The values are ours and
-        /// start at zero - see docs/07-FINDINGS.md F16.
+        /// Apply the stance's pose. The lerp lives in StanceState, so this is
+        /// just the write - which keeps the "where should the weapon be" decision
+        /// in one place instead of spread across two pose methods that each
+        /// lerped their own copy.
         /// </summary>
-        private static void ApplyLoweredPose(ProceduralWeaponAnimation pwa, Plugin p, float dt)
+        private static void ApplyStancePose(ProceduralWeaponAnimation pwa, Plugin p)
         {
             Transform root = GameRefs.GetWeaponRoot(pwa);
             if (root == null) return;
 
-            bool down = !p.Stance.WeaponReady;
-            float speed = p.Cfg.LoweredLerpSpeed.Value * dt;
-
-            _loweredPos = Vector3.Lerp(_loweredPos, down ? p.Cfg.LoweredPos.Value : Vector3.zero, speed);
-            _loweredRot = Vector3.Lerp(_loweredRot, down ? p.Cfg.LoweredRot.Value : Vector3.zero, speed);
-
-            root.localPosition += _loweredPos;
+            root.localPosition += p.Stance.PosePos;
 
             Quaternion add = Quaternion.identity;
-            add.x = _loweredRot.x;
-            add.y = _loweredRot.y;
-            add.z = _loweredRot.z;
+            add.x = p.Stance.PoseRot.x;
+            add.y = p.Stance.PoseRot.y;
+            add.z = p.Stance.PoseRot.z;
             root.localRotation *= add;
         }
 
         /// <summary>
-        /// The ready stance, as measured in Bodycam: the weapon is NOT shouldered
-        /// at rest. The firing hand is lowered, the gun is held low, and the
-        /// buttstock sits behind the arm rather than in the shoulder pocket.
-        /// Shouldering happens when you aim, and takes a moment.
+        /// What the stance costs: arm stamina, and how fast the sights come up.
         ///
-        /// Tarkov's default "weapon up" is already shouldered, so reproducing the
-        /// Bodycam ready position means offsetting away from it. Off by default
-        /// (zero offsets) because the right values have to be found by eye and a
-        /// guess here would just be noise - see docs/07-FINDINGS.md F12.
-        ///
-        /// Fades out as you aim, so aiming down sights is unaffected.
+        /// Both work WITH the game's own systems rather than replacing them -
+        /// scaling Tarkov's hands-stamina restore rate and its AimingSpeed, from
+        /// captured stock values so nothing compounds frame to frame.
         /// </summary>
-        private static void ApplyReadyPose(ProceduralWeaponAnimation pwa, Plugin p, float dt)
+        private static void ApplyStanceConsequences(ProceduralWeaponAnimation pwa, Plugin p, FreeAimConfig cfg)
         {
-            if (!p.Cfg.ReadyPoseEnabled.Value) return;
+            if (cfg.StanceStaminaEnabled.Value)
+                GameRefs.SetHandsRecovery(LocalPlayer, p.Stance.HandsRecovery);
+            else
+                GameRefs.ReleaseHandsRecovery(LocalPlayer);
 
-            Transform root = GameRefs.GetWeaponRoot(pwa);
-            if (root == null) return;
-
-            // Only while the weapon is up, and blended out by aiming.
-            float weight = p.State.Gate * (1f - p.State.AimBlend);
-            float speed = p.Cfg.LoweredLerpSpeed.Value * dt;
-
-            _readyPos = Vector3.Lerp(_readyPos, p.Cfg.ReadyPos.Value * weight, speed);
-            _readyRot = Vector3.Lerp(_readyRot, p.Cfg.ReadyRot.Value * weight, speed);
-
-            root.localPosition += _readyPos;
-
-            Quaternion add = Quaternion.identity;
-            add.x = _readyRot.x;
-            add.y = _readyRot.y;
-            add.z = _readyRot.z;
-            root.localRotation *= add;
+            if (cfg.AdsSpeedFromWeight.Value)
+            {
+                float w = GameRefs.GetHeldWeaponWeight(LocalPlayer);
+                float reference = Mathf.Max(0.1f, cfg.AdsWeightReference.Value);
+                if (w > 0.01f)
+                {
+                    // Speed scales inversely with weight, softened by strength:
+                    // strength 0 leaves it stock, 1 is the full inverse ratio.
+                    float ratio = reference / w;
+                    float mul = Mathf.Lerp(1f, ratio, Mathf.Clamp01(cfg.AdsWeightStrength.Value));
+                    GameRefs.SetAimingSpeed(pwa, Mathf.Clamp(mul, 0.35f, 2f));
+                }
+            }
+            else GameRefs.ReleaseAimingSpeed(pwa);
         }
     }
 }

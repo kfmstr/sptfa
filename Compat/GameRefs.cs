@@ -72,6 +72,34 @@ namespace SPTFreeAim.Compat
         private static bool _recoilChainBound;
         public static bool RecoilAvailable { get; private set; }
 
+        // ---- Stance consequences: stamina and aim speed ---------------------
+        // Tarkov already models arm fatigue as a HandsStamina pool separate from
+        // the main one, with its own capacity and restore rate. Holding the
+        // weapon up drains it. So a "holding it up should tire you" mechanic does
+        // not need a new drain that double-counts with the game's - it needs the
+        // existing restore rate to depend on stance.
+        //
+        // Player.Physical is a FIELD of type PhysicalBase (not a property - the
+        // same trap as F10.2), and HandsRestoreRate is a public float on it.
+        private static readonly Member M_Physical = new Member("Player.Physical", "Physical");
+        private static readonly Member M_HandsRestoreRate = new Member("PhysicalBase.HandsRestoreRate", "HandsRestoreRate");
+        private static bool _physicalBound;
+        public static bool StaminaAvailable { get; private set; }
+
+        /// <summary>Stock restore rate, captured once so our scaling is never applied twice.</summary>
+        private static float _baseHandsRestoreRate;
+        private static bool _haveBaseRestoreRate;
+
+        /// <summary>How fast the sights come up. Writing it changes the game's own ADS speed.</summary>
+        private static readonly Member M_AimingSpeed = new Member("PWA.AimingSpeed", "AimingSpeed");
+        private static float _baseAimingSpeed;
+        private static bool _haveBaseAimingSpeed;
+
+        /// <summary>Held weapon, for its weight. Bound lazily - the concrete controller type varies.</summary>
+        private static readonly Member M_HandsItem = new Member("HandsController.Item", "Item");
+        private static readonly Member M_TotalWeight = new Member("Item.TotalWeight", "TotalWeight", "Weight");
+        private static bool _weightChainBound;
+
         // ---- HandsContainer (PlayerSpring) transforms -----------------------
         // All three are public FIELDS, not properties. See Compat/Member.cs.
         private static readonly Member M_WeaponRootAnim = new Member("HandsContainer.WeaponRootAnim", "WeaponRootAnim");
@@ -149,6 +177,8 @@ namespace SPTFreeAim.Compat
                     return;
                 }
                 M_IsAiming.Bind(T_ProceduralWeaponAnimation);
+                M_AimingSpeed.Bind(T_ProceduralWeaponAnimation);
+                M_Physical.Bind(T_Player);
 
                 T_HandsContainer = M_HandsContainer.MemberType;
                 M_WeaponRootAnim.Bind(T_HandsContainer);
@@ -409,6 +439,87 @@ namespace SPTFreeAim.Compat
             t.rotation = worldRot * t.rotation;
         }
 
+        // ================= Stance consequences ===========================
+
+        private static object GetPhysical(object player)
+        {
+            object phys = M_Physical.Get(player);
+            if (phys == null) return null;
+            if (!_physicalBound)
+            {
+                M_HandsRestoreRate.Bind(phys.GetType());
+                _physicalBound = true;
+                StaminaAvailable = M_HandsRestoreRate.Resolved;
+                Plugin.Log.LogInfo("Hands stamina: " + M_HandsRestoreRate.Describe());
+            }
+            return phys;
+        }
+
+        /// <summary>
+        /// Scale how fast the game restores hands stamina. 1 leaves it stock.
+        /// The stock value is captured once, so repeated calls scale the original
+        /// rather than compounding on last frame's result.
+        /// </summary>
+        public static bool SetHandsRecovery(object player, float multiplier)
+        {
+            object phys = GetPhysical(player);
+            if (phys == null || !M_HandsRestoreRate.Resolved) return false;
+
+            if (!_haveBaseRestoreRate)
+            {
+                _baseHandsRestoreRate = M_HandsRestoreRate.Get(phys, 0f);
+                if (_baseHandsRestoreRate <= 0f) return false;
+                _haveBaseRestoreRate = true;
+            }
+            return M_HandsRestoreRate.Set(phys, _baseHandsRestoreRate * multiplier);
+        }
+
+        /// <summary>Hand the game's own restore rate back, e.g. when the mod is switched off.</summary>
+        public static void ReleaseHandsRecovery(object player)
+        {
+            if (!_haveBaseRestoreRate) return;
+            object phys = GetPhysical(player);
+            if (phys != null) M_HandsRestoreRate.Set(phys, _baseHandsRestoreRate);
+        }
+
+        /// <summary>Scale the game's ADS speed. 1 leaves it stock.</summary>
+        public static bool SetAimingSpeed(object pwa, float multiplier)
+        {
+            if (pwa == null || !M_AimingSpeed.Resolved || !M_AimingSpeed.Writable) return false;
+            if (!_haveBaseAimingSpeed)
+            {
+                _baseAimingSpeed = M_AimingSpeed.Get(pwa, 0f);
+                if (_baseAimingSpeed <= 0f) return false;
+                _haveBaseAimingSpeed = true;
+            }
+            return M_AimingSpeed.Set(pwa, _baseAimingSpeed * multiplier);
+        }
+
+        public static void ReleaseAimingSpeed(object pwa)
+        {
+            if (_haveBaseAimingSpeed && pwa != null) M_AimingSpeed.Set(pwa, _baseAimingSpeed);
+        }
+
+        /// <summary>Weight of the held weapon in kg, or 0 when unavailable.</summary>
+        public static float GetHeldWeaponWeight(object player)
+        {
+            object hc = GetHandsController(player);
+            if (hc == null) return 0f;
+
+            if (!_weightChainBound)
+            {
+                M_HandsItem.Bind(hc.GetType());
+                object it0 = M_HandsItem.Get(hc);
+                if (it0 == null) return 0f;      // not holding an item yet
+                M_TotalWeight.Bind(it0.GetType());
+                _weightChainBound = true;
+                Plugin.Log.LogInfo("Weapon weight: " + M_HandsItem.Describe() + " | " + M_TotalWeight.Describe());
+            }
+
+            object item = M_HandsItem.Get(hc);
+            return item == null ? 0f : M_TotalWeight.Get(item, 0f);
+        }
+
         public static string Describe()
         {
             if (!Ready) return "GameRefs: NOT READY - " + LastError;
@@ -424,6 +535,8 @@ namespace SPTFreeAim.Compat
                  + "\n  " + M_StateName.Describe()
                  + "\n  LocalRotateAround: " + (UsingLocalRotateAroundFallback
                         ? "FALLBACK (re-tune PivotDistance)" : "game implementation")
+                 + "\n  " + M_AimingSpeed.Describe()
+                 + "\n  " + M_Physical.Describe()
                  + "\n  camera recoil hook: " + (M_Pwa_CameraRecoil == null
                         ? "NOT FOUND (recoil decoupling unavailable)" : ResolvedCameraRecoilName);
         }
