@@ -98,7 +98,15 @@ namespace SPTFreeAim.Compat
         /// <summary>Held weapon, for its weight. Bound lazily - the concrete controller type varies.</summary>
         private static readonly Member M_HandsItem = new Member("HandsController.Item", "Item");
         private static readonly Member M_TotalWeight = new Member("Item.TotalWeight", "TotalWeight", "Weight");
-        private static bool _weightChainBound;
+
+        // Cached against the types they were bound to, not a plain "done" flag. A
+        // rifle, a knife and a grenade arrive as different controller and item
+        // classes, and the declaration that wins differs between them - a Weapon
+        // gets ContainerCollection.TotalWeight, a grenade gets Item.TotalWeight.
+        // Reusing the first binding on a later type invokes a property the target
+        // does not have. (F19)
+        private static Type _boundControllerType;
+        private static Type _boundItemType;
 
         // ---- HandsContainer (PlayerSpring) transforms -----------------------
         // All three are public FIELDS, not properties. See Compat/Member.cs.
@@ -506,18 +514,27 @@ namespace SPTFreeAim.Compat
             object hc = GetHandsController(player);
             if (hc == null) return 0f;
 
-            if (!_weightChainBound)
+            Type hcType = hc.GetType();
+            if (hcType != _boundControllerType)
             {
-                M_HandsItem.Bind(hc.GetType());
-                object it0 = M_HandsItem.Get(hc);
-                if (it0 == null) return 0f;      // not holding an item yet
-                M_TotalWeight.Bind(it0.GetType());
-                _weightChainBound = true;
-                Plugin.Log.LogInfo("Weapon weight: " + M_HandsItem.Describe() + " | " + M_TotalWeight.Describe());
+                if (!M_HandsItem.Bind(hcType)) { _boundControllerType = hcType; return 0f; }
+                _boundControllerType = hcType;
+                _boundItemType = null;
+                Plugin.Log.LogInfo("Held item: " + M_HandsItem.Describe() + " on " + hcType.Name);
             }
 
             object item = M_HandsItem.Get(hc);
-            return item == null ? 0f : M_TotalWeight.Get(item, 0f);
+            if (item == null) return 0f;         // not holding anything yet
+
+            Type itemType = item.GetType();
+            if (itemType != _boundItemType)
+            {
+                if (!M_TotalWeight.Bind(itemType)) { _boundItemType = itemType; return 0f; }
+                _boundItemType = itemType;
+                Plugin.Log.LogInfo("Weapon weight: " + M_TotalWeight.Describe() + " on " + itemType.Name);
+            }
+
+            return M_TotalWeight.Get(item, 0f);
         }
 
         public static string Describe()

@@ -20,11 +20,20 @@ spec.exe
 
 csc /out:stance.exe tests\realmath.cs tests\stance-stubs.cs Core\Stance.cs Core\StanceState.cs tests\StanceTests.cs
 stance.exe
+
+csc /out:member.exe Compat\Member.cs Compat\BoolProbe.cs tests\MemberTests.cs
+member.exe
 ```
 
-Two harnesses. `SpecTests` asserts against the measurements in
+Three harnesses. `SpecTests` asserts against the measurements in
 `docs/01-SPEC.md`; `StanceTests` asserts against the stance machine's own rules,
-which are a design decision rather than a measurement.
+which are a design decision rather than a measurement; `MemberTests` guards the
+reflection layer against `AmbiguousMatchException` (`docs/07-FINDINGS.md` F19),
+which killed the mod mid-raid.
+
+`MemberTests` begins by asserting that its own fixture is still ambiguous. The
+first version of it was not, so it passed while guarding nothing. If that check
+ever fails, the fixture needs fixing before the rest of the file means anything.
 
 `stance-stubs.cs` exists because StanceState has two halves - one that reads the
 game and one that decides. Only the second is worth testing, so the reading half

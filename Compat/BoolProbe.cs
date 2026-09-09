@@ -55,32 +55,41 @@ namespace SPTFreeAim.Compat
             if (_attempted || sample == null) return;
             _attempted = true;
 
-            Type t = sample.GetType();
-            const BindingFlags ANY = BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic;
+            Type sampleType = sample.GetType();
+
+            // DeclaredOnly, most-derived first - same reason as Member.Bind: a
+            // shadowed member makes a whole-hierarchy lookup ambiguous. Here the
+            // old catch swallowed that into "candidate not found", which is the
+            // silent-failure shape this class exists to avoid (F19).
+            const BindingFlags DECLARED =
+                BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.DeclaredOnly;
 
             foreach (string name in _candidates)
             {
-                try
+                for (Type t = sampleType; t != null && t != typeof(object); t = t.BaseType)
                 {
-                    PropertyInfo p = t.GetProperty(name, ANY);
-                    if (p != null && p.PropertyType == typeof(bool) && p.CanRead)
+                    try
                     {
-                        _prop = p; Accept(t, name); return;
-                    }
+                        PropertyInfo p = t.GetProperty(name, DECLARED);
+                        if (p != null && p.PropertyType == typeof(bool) && p.CanRead)
+                        {
+                            _prop = p; Accept(t, name); return;
+                        }
 
-                    MethodInfo m = t.GetMethod(name, ANY, null, Type.EmptyTypes, null);
-                    if (m != null && m.ReturnType == typeof(bool))
-                    {
-                        _method = m; Accept(t, name + "()"); return;
-                    }
+                        MethodInfo m = t.GetMethod(name, DECLARED, null, Type.EmptyTypes, null);
+                        if (m != null && m.ReturnType == typeof(bool))
+                        {
+                            _method = m; Accept(t, name + "()"); return;
+                        }
 
-                    FieldInfo f = t.GetField(name, ANY);
-                    if (f != null && f.FieldType == typeof(bool))
-                    {
-                        _field = f; Accept(t, name); return;
+                        FieldInfo f = t.GetField(name, DECLARED);
+                        if (f != null && f.FieldType == typeof(bool))
+                        {
+                            _field = f; Accept(t, name); return;
+                        }
                     }
+                    catch (AmbiguousMatchException) { }
                 }
-                catch { /* keep trying the rest */ }
             }
         }
 

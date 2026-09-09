@@ -934,3 +934,98 @@ worked, and the test passed because it asserted the wrong layer.
 Every pose value is zero. `LowReady` and `HighReady` do nothing visible until
 someone tunes them by eye against Bodycam — see F16 for why a plausible-looking
 inherited number would be worse than an empty field.
+
+---
+
+## F19. One reflection call took the whole mod down mid-raid
+
+Reported from a live raid: *"for some reason it breaks at some point and then to
+fix you need open knife, after that nothing works. Also I couldn't get down
+stance, it was always low ready."*
+
+Three separate symptoms, one cause and two design errors behind it.
+
+```
+[Error :SPT Free Aim] Free aim frame failed, disabling to avoid log spam:
+System.Reflection.AmbiguousMatchException: Ambiguous match found.
+  at SPTFreeAim.Compat.Member.Bind (System.Type owner)
+  at SPTFreeAim.Compat.GameRefs.GetHeldWeaponWeight (System.Object player)
+  at SPTFreeAim.Patches.FreeAimPatches.ApplyStanceConsequences (...)
+  at SPTFreeAim.Patches.FreeAimPatches.Frame (...)
+[Error :SPT Free Aim] SPT Free Aim disabled for this session.
+```
+
+### The trap
+
+`AbstractHandsController` declares `Item Item { get; }`. `FirearmController`
+redeclares the same name with a **narrower type**, `Weapon Item { get; }`. Two
+declarations, two vtable slots, one name. A whole-hierarchy `GetProperty("Item")`
+has no rule for choosing and throws.
+
+Confirmed against the shipped assembly rather than guessed:
+
+```
+EFT.Player/FirearmController . Item
+  FirearmController          : EFT.InventoryLogic.Weapon   virtual=True newslot=True
+  AbstractHandsController    : EFT.InventoryLogic.Item     virtual=True newslot=True
+```
+
+The fix is to walk the hierarchy a level at a time with `DeclaredOnly`,
+most-derived first, which resolves it the way the C# compiler itself would: the
+closest declaration wins. Same change in `BoolProbe`, whose blanket
+`catch { continue; }` had been turning the same exception into a silent "member
+not found" — worse than a crash, because nothing in the log said why.
+
+**The type matters, not the shadowing.** My first regression test used plain
+`new` shadowing with the same type, and it did not throw — Mono resolves that
+without complaint. The test passed while guarding nothing. `tests/MemberTests.cs`
+now reproduces the narrowed redeclaration and asserts *first* that the lookup
+really is ambiguous, so the day a runtime stops throwing, the file says so
+instead of quietly going hollow.
+
+### Why the knife "fixed" it, and why nothing worked afterwards
+
+`KnifeController` does not redeclare `Item`, so binding against it succeeded.
+The binding was cached behind a one-shot `_weightChainBound` flag, so switching
+back to a rifle never rebound and never threw again. The crash stopped — which
+is what "open knife to fix it" was.
+
+By then it was too late. `EmergencyDisable` set a flag that nothing cleared for
+the rest of the session, so the master toggle looked dead and the only recovery
+was leaving the raid. Hence "after that nothing works".
+
+And with the frame path dead, `StanceState.Update` stopped running, so the HUD
+kept displaying the last stance it had computed. The stance key was working
+fine; nothing was reading it. That is the "always low ready" report — a frozen
+readout, not a broken state machine.
+
+### Three fixes, because there were three failures
+
+1. **`Member.Bind` and `BoolProbe.TryResolve` walk the hierarchy themselves.**
+   The actual bug.
+2. **`ApplyStanceConsequences` is wrapped on its own.** Arm stamina and
+   weight-scaled ADS are optional extras. An exception in either now switches
+   those two off and lets the coupling — the entire point of the mod — carry on.
+   Optional features must not be able to kill required ones.
+3. **`EmergencyDisable` is recoverable.** Toggling F8 clears it and retries. A
+   permanent-until-restart failure mode is only acceptable if the failure is
+   permanent, and this one was not.
+
+Also: the weight chain now caches against the types it was bound to rather than
+a boolean. A rifle resolves `ContainerCollection.TotalWeight` and a grenade
+resolves `Item.TotalWeight`; reusing the first binding on the second item type
+would invoke a property the target does not have. The old flag would have done
+exactly that.
+
+### The lesson worth keeping
+
+An unhandled exception in a per-frame patch does not report itself as one
+failure. It reports as every downstream symptom at once — a frozen HUD, a dead
+key, a toggle that does nothing — and each of those invites a different wrong
+diagnosis. When several unrelated things stop at the same moment, read the log
+before believing any of them.
+
+Second: I had the evidence and misread it. An earlier Cecil probe printed
+`TotalWeight` twice, I took that for the ambiguous member, and wrote a test
+around it. `TotalWeight` is `Single` on both declarations and resolves fine.
+Printing a probe's output is not the same as reading it.

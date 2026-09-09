@@ -59,18 +59,63 @@ namespace SPTFreeAim.Compat
 
         public bool Bind(Type owner)
         {
-            const BindingFlags ANY = BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic;
             if (owner == null) return false;
+
+            // Binding is repeatable: the same Member gets pointed at a new type
+            // when the game hands us a different concrete class. Clear first, so a
+            // rebind that finds nothing cannot leave the previous type's
+            // PropertyInfo in place and then throw on the wrong target.
+            _prop = null;
+            _field = null;
+            _resolvedName = "";
+            _kind = "";
+            _declaring = "";
+
+            // Walk the hierarchy one level at a time with DeclaredOnly rather than
+            // letting reflection search it in one go.
+            //
+            // A derived type can redeclare a member its base already has, with a
+            // NARROWER TYPE. EFT.Player.FirearmController declares
+            //     Weapon Item
+            // over AbstractHandsController's
+            //     Item Item
+            // - same name, different return type, two separate vtable slots. A
+            // whole-hierarchy GetProperty cannot choose between them and throws
+            // AmbiguousMatchException, which is how this took the mod down
+            // mid-raid (docs/07-FINDINGS.md F19).
+            //
+            // Walking most-derived-first resolves it the way C# itself would: the
+            // closest declaration wins.
+            const BindingFlags DECLARED =
+                BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.DeclaredOnly;
 
             foreach (string n in _names)
             {
-                PropertyInfo p = owner.GetProperty(n, ANY);
-                if (p != null) { _prop = p; _resolvedName = n; _kind = "property"; _declaring = owner.Name; return true; }
+                for (Type t = owner; t != null && t != typeof(object); t = t.BaseType)
+                {
+                    try
+                    {
+                        PropertyInfo p = t.GetProperty(n, DECLARED);
+                        if (p != null) { _prop = p; Accept(n, "property", t); return true; }
 
-                FieldInfo f = owner.GetField(n, ANY);
-                if (f != null) { _field = f; _resolvedName = n; _kind = "field"; _declaring = owner.Name; return true; }
+                        FieldInfo f = t.GetField(n, DECLARED);
+                        if (f != null) { _field = f; Accept(n, "field", t); return true; }
+                    }
+                    catch (AmbiguousMatchException)
+                    {
+                        // Two declarations on the SAME type - vanishingly rare, and
+                        // nothing sensible to pick. Skip the level rather than die.
+                    }
+                }
             }
             return false;
+        }
+
+        private void Accept(string name, string kind, Type declaring)
+        {
+            _resolvedName = name;
+            _kind = kind;
+            _declaring = declaring.Name;
         }
 
         public object Get(object target)

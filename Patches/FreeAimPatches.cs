@@ -125,7 +125,18 @@ namespace SPTFreeAim.Patches
             st.SetAimBlend(p.Stance.AimBlend);
             st.UpdateGate(p.Stance.Coupling, dt, cfg.GateSpeed.Value);
 
-            ApplyStanceConsequences(pwa, p, cfg);
+            // Stamina and ADS speed are optional extras. A failure in either must
+            // not take the coupling down with it - that is exactly what happened
+            // in F19, where one reflection lookup killed the whole mod mid-raid.
+            // Each disables only itself.
+            try { ApplyStanceConsequences(pwa, p, cfg); }
+            catch (Exception e)
+            {
+                Plugin.Log.LogError("Stance consequences failed; switching those two off " +
+                                    "and carrying on with the coupling: " + e);
+                cfg.StanceStaminaEnabled.Value = false;
+                cfg.AdsSpeedFromWeight.Value = false;
+            }
 
             // The weapon's own recoil, routed to the gun bearing rather than the
             // camera (docs/07-FINDINGS.md F12.3). Read before Step so the HUD and
