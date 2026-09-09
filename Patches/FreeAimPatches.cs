@@ -117,7 +117,17 @@ namespace SPTFreeAim.Patches
             object mc = GameRefs.GetMovementContext(LocalPlayer);
             if (mc == null) return;
 
-            Vector2 raw = new Vector2(GameRefs.GetYaw(mc), GameRefs.GetPitch(mc));
+            // Pitch sign is normalised HERE, at the source, not at the apply step.
+            //
+            // The Invert toggles only ever rotated the weapon. The drive loop, the
+            // body bearing and the camera offset all kept the game's own sign, so
+            // flipping pitch fixed the gun's picture while leaving the body
+            // disagreeing with it - one axis right, the other backwards, exactly
+            // as reported. Tarkov counts pitch downward; the loop wants up. One
+            // sign, applied on read and undone on write, and every consumer
+            // agrees. F24.
+            float pitchSign = cfg.InvertGamePitch.Value ? -1f : 1f;
+            Vector2 raw = new Vector2(GameRefs.GetYaw(mc), GameRefs.GetPitch(mc) * pitchSign);
 
             st.UpdateAimBlend(GameRefs.GetIsAiming(pwa), dt);
             st.UpdateGate(p.Stance.WeaponReady || !cfg.StanceGateEnabled.Value, dt, cfg.GateSpeed.Value);
@@ -143,7 +153,8 @@ namespace SPTFreeAim.Patches
             {
                 // Note this writes Rotation, not Yaw/Pitch: those are read-only
                 // computed properties over it. See docs/07-FINDINGS.md F10.
-                if (!GameRefs.SetRotation(mc, writeBack.Value))
+                Vector2 back = new Vector2(writeBack.Value.x, writeBack.Value.y * pitchSign);
+                if (!GameRefs.SetRotation(mc, back))
                 {
                     Plugin.Log.LogWarning(
                         "Intercept mode cannot drive MovementContext.Rotation. Falling back to " +
@@ -262,7 +273,11 @@ namespace SPTFreeAim.Patches
             // the grip and trigger - and the buttstock swings away from the body.
             // See docs/07-FINDINGS.md F12. A single up-axis distance cannot place
             // a pivot at the grip, which is why this takes a Vector3.
-            Vector3 pivot = cfg.PivotOffset.Value;
+            // One dial along the weapon's local up, which is what the earliest
+            // builds had and what -0.15 was measured against: it put the hinge on
+            // the pistol grip. The Vector3 below is a fine offset on top, zero by
+            // default, for nudging off that line.
+            Vector3 pivot = Vector3.up * cfg.PivotDistance.Value + cfg.PivotFineOffset.Value;
 
             GameRefs.LocalRotateAround(root, pivot, new Vector3(pitch, 0f, yaw));
 

@@ -34,7 +34,9 @@ namespace SPTFreeAim
         // ---- Pivot -------------------------------------------------------
         public ConfigEntry<HingeMode> Hinge;
         public ConfigEntry<Vector3> GripFromEye;
-        public ConfigEntry<Vector3> PivotOffset;
+        public ConfigEntry<float> PivotDistance;
+        public ConfigEntry<Vector3> PivotFineOffset;
+        public ConfigEntry<bool> InvertGamePitch;
         public ConfigEntry<bool> ApplyWeaponOffset;
         public ConfigEntry<bool> ApplyCameraOffset;
         public ConfigEntry<bool> InvertYaw;
@@ -172,19 +174,31 @@ namespace SPTFreeAim
                 "Further from the eye means the muzzle sweeps a longer arc for the same angle. All " +
                 "three take negatives; flip the first one for a left-handed hold.");
 
-            PivotOffset = cfg.Bind(S_PIVOT, "Pivot offset", new Vector3(0f, 0.1f, 0f),
-                "LEGACY EULER mode only, and ignored in Around Grip. " +
-                "Where the weapon hinges, as a point in the weapon root's local space.\n" +
+            PivotDistance = cfg.Bind(S_PIVOT, "Pivot distance (m)", -0.15f, new ConfigDescription(
+                "LEGACY EULER mode. Where the weapon hinges, as a distance along its local up axis. " +
+                "This is the single dial the earliest builds had, and -0.15 is the value that put " +
+                "the hinge on the pistol grip - the firing hand.\n" +
                 "\n" +
-                "NOT the shoulder. docs/02-PLAN.md said to pivot about roughly the shoulder; " +
-                "measured in Bodycam the gun hinges about the FIRING HAND - grip and trigger - " +
-                "and the buttstock swings away from the body. See docs/07-FINDINGS.md F12.\n" +
+                "Negative moves the pivot down the weapon toward the grip; positive moves it up and " +
+                "out. Larger magnitudes give the muzzle a longer arc for the same angle.",
+                new AcceptableValueRange<float>(-1f, 1f)));
+
+            PivotFineOffset = cfg.Bind(S_PIVOT, "Pivot fine offset", Vector3.zero,
+                "LEGACY EULER mode. Added on top of the distance above, for nudging the hinge off " +
+                "the up axis. Zero by default: get the single dial right first, and only reach for " +
+                "this if the grip is genuinely off that line.");
+
+            InvertGamePitch = cfg.Bind(S_PIVOT, "Invert game pitch", true,
+                "Normalises which way pitch counts, at the point the bearing is READ from the game " +
+                "rather than at the point the weapon is drawn.\n" +
                 "\n" +
-                "The default (0, 0.1, 0) is lualeet's original single-axis value, kept only so " +
-                "behaviour does not change until you tune it. To find the grip: set cone to 25 so " +
-                "the swing is obvious, then change one component at a time and watch which part of " +
-                "the weapon stays still. The component that stops the grip moving is the one you " +
-                "want.");
+                "This is the fix for horizontal and vertical behaving in opposite senses. The " +
+                "Invert pitch toggle below only ever rotated the weapon, so flipping it fixed the " +
+                "gun's picture while the body bearing and the camera kept the old sign - one axis " +
+                "right, the other backwards. This one flips the sign for the whole loop at once, " +
+                "and undoes it again on write-back, so every part agrees.\n" +
+                "\n" +
+                "If vertical is now inverted the OTHER way, flip this. See docs/07-FINDINGS.md F24.");
 
             ApplyWeaponOffset = cfg.Bind(S_PIVOT, "Apply weapon offset", true,
                 "Rotate the weapon by the offset. Turn OFF to isolate a problem: with this off " +
@@ -199,7 +213,9 @@ namespace SPTFreeAim
             InvertYaw = cfg.Bind(S_PIVOT, "Invert yaw", false,
                 "Flip if the weapon swings the wrong way horizontally. Expect to need one of these.");
             InvertPitch = cfg.Bind(S_PIVOT, "Invert pitch", false,
-                "Flip if the weapon swings the wrong way vertically.");
+                "Cosmetic only - it rotates the WEAPON and nothing else, so using it to correct a " +
+                "sign leaves the body bearing disagreeing with the gun. For a genuine vertical " +
+                "inversion use \"Invert game pitch\" above instead.");
             SwapAxes = cfg.Bind(S_PIVOT, "Swap axes", false,
                 "Flip if horizontal mouse movement tilts the weapon and vertical movement pans it.");
 

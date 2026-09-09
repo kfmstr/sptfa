@@ -1397,3 +1397,74 @@ voice about it.
 A second, smaller one: a change is not additive just because it only touches new
 code paths. `ApplyLoweredPose` never went near `ApplyWeaponOffset`. It shared a
 transform with it, three nodes up, and that was enough.
+
+---
+
+## F24. One axis right, the other backwards - the toggles were in the wrong place
+
+> horizontal and vertical mouse movement works differently, if you select
+> intercept or reactive, it is one on the horizontal and oposite on the vertical
+
+`InvertYaw`, `InvertPitch` and `SwapAxes` were read in exactly one place:
+`ApplyWeaponOffset`. They rotate the WEAPON and nothing else.
+
+Everything upstream of that - the drive loop, the body bearing written back in
+Intercept, the camera counter-rotation in Compensate - kept the game's own sign
+convention. Tarkov counts pitch downward. So the two axes were never consistent
+with each other, and the only control offered to fix it made things worse: flip
+`Invert pitch` and the gun's picture comes right while the body bearing and the
+camera stay on the old sign, so the gun now points somewhere the body does not
+agree with.
+
+That is a control that appears to work and quietly breaks the coupling, which is
+the same shape of error as F13.
+
+### The fix
+
+Normalise the sign where the bearing is READ, and undo it on write-back:
+
+```csharp
+float pitchSign = cfg.InvertGamePitch.Value ? -1f : 1f;
+Vector2 raw = new Vector2(GameRefs.GetYaw(mc), GameRefs.GetPitch(mc) * pitchSign);
+...
+Vector2 back = new Vector2(writeBack.Value.x, writeBack.Value.y * pitchSign);
+GameRefs.SetRotation(mc, back);
+```
+
+One sign, applied once, before anything consumes the bearing. The loop, the
+weapon, the camera and the body all see the same convention, so the two axes
+behave the same way in every drive mode.
+
+`Invert pitch` and `Invert yaw` stay, relabelled as cosmetic, because rotating
+only the weapon is a legitimate thing to want and an illegitimate way to correct
+a sign error.
+
+### And the pivot dial came back
+
+> I had a chance to set where is the rotation axis on the gun, moving by the gun
+> length or something, I remember -0.15 gave me exact position of the gun grip
+
+Correct, and it was in the first four commits: `PivotDistance`, a single float,
+used as `Vector3.up * pivot`. `514b815` replaced it with a Vector3 on the
+reasoning that one axis could not reach the grip. The owner had already found
+that it could - **-0.15** put the hinge on the pistol grip - and the replacement
+threw away a working, one-dimensional, tunable dial in favour of three numbers
+whose axes nobody had established. Every pivot problem since has been a search
+through that three-dimensional space for a point he had already found on a line.
+
+`Pivot distance (m)` is back, default -0.15. `Pivot fine offset` is a Vector3 on
+top, zero by default, for the case where the grip genuinely is off that line.
+
+Both are NEW config keys on purpose. The stale `Pivot offset = (0.2, 0.1, 0)` and
+`Pivot distance = 0.1` in his config are from the old semantics and would have
+silently overridden the defaults with values tuned against different maths.
+
+### The lesson worth keeping
+
+Twice now the answer was "he already had it and I replaced it": the pivot dial
+here, and the rotation mapping in F23. Both replacements were argued from what
+the code could not do in principle. Neither checked whether it was already doing
+it in practice.
+
+When a user says a specific number worked, that number is a measurement of the
+system. It is worth more than an argument about what the system ought to need.
