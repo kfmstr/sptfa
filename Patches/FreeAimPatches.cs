@@ -152,6 +152,8 @@ namespace SPTFreeAim.Patches
             }
             else st.RecoilOffset = Vector2.zero;
 
+            st.UpdateRoll(dt, cfg.CantSpeed.Value);
+
             FreeAimState.Tuning tuning = cfg.Snapshot();
             Vector2? writeBack = st.Step(raw, dt, tuning);
 
@@ -186,7 +188,7 @@ namespace SPTFreeAim.Patches
             if (doPose) GuardPose.BeginFrame(weaponRoot); else GuardPose.Release(weaponRoot);
 
             if (doCamera) { ApplyCameraOffset(pwa, -applied); GuardCamera.EndFrame(cameraTransform); }
-            if (doWeapon) { ApplyWeaponOffset(pwa, applied, cfg); GuardWeapon.EndFrame(weaponRootAnim); }
+            if (doWeapon) { ApplyWeaponOffset(pwa, applied, cfg, p); GuardWeapon.EndFrame(weaponRootAnim); }
             if (doPose) { ApplyStancePose(pwa, p); GuardPose.EndFrame(weaponRoot); }
 
             ReportGuardsOnce();
@@ -254,7 +256,8 @@ namespace SPTFreeAim.Patches
         /// this - they exist precisely because this mapping has to be found by
         /// experiment on each game version.
         /// </summary>
-        private static void ApplyWeaponOffset(ProceduralWeaponAnimation pwa, Vector2 offset, FreeAimConfig cfg)
+        private static void ApplyWeaponOffset(ProceduralWeaponAnimation pwa, Vector2 offset,
+                                              FreeAimConfig cfg, Plugin p)
         {
             Transform root = GameRefs.GetWeaponRootAnim(pwa);
             if (root == null) return;
@@ -263,15 +266,20 @@ namespace SPTFreeAim.Patches
             float pitch = cfg.InvertPitch.Value ? -offset.y : offset.y;
             if (cfg.SwapAxes.Value) { float t = yaw; yaw = pitch; pitch = t; }
 
-            // The pivot is a full 3D point in the weapon root's local space, not a
-            // distance along one axis.
+            // The pivot is a point in the weapon root's local space, and it MOVES.
             //
-            // docs/02-PLAN.md said to rotate "about roughly the shoulder". That is
-            // wrong: measured in Bodycam, the gun hinges about the FIRING HAND -
-            // the grip and trigger - and the buttstock swings away from the body.
-            // See docs/07-FINDINGS.md F12. A single up-axis distance cannot place
-            // a pivot at the grip, which is why this takes a Vector3.
-            Vector3 pivot = cfg.PivotOffset.Value;
+            // docs/02-PLAN.md said to rotate about roughly the shoulder. F12
+            // corrected that to the firing hand. Both were half right, and F20 is
+            // why: the pivot is wherever the weapon is braced, and what braces it
+            // changes with the stance. Held at the ready that is the right hand on
+            // the grip; once the buttstock is in the shoulder pocket it is the
+            // buttpad.
+            //
+            // The blend is the aim blend, not a setting of its own. "If aiming,
+            // the buttstock is always on the shoulder" is a rule rather than a
+            // preference, so there is nothing here to tune.
+            WeaponAnchors anchors = cfg.AnchorSnapshot();
+            Vector3 pivot = anchors.Pivot(p.State.AimBlend);
 
             GameRefs.LocalRotateAround(root, pivot, new Vector3(pitch, 0f, yaw));
 
@@ -279,6 +287,31 @@ namespace SPTFreeAim.Patches
             // offset applied after ours is wrong. lualeet's comment, and it is
             // correct - do not remove it as dead code.
             GameRefs.LocalRotateAround(root, -pivot, Vector3.zero);
+
+            ApplyCant(root, anchors, p);
+        }
+
+        /// <summary>
+        /// Roll about the bore: the weapon's third rotational freedom (F20).
+        ///
+        /// Rolled about the SUPPORT HAND, not the grip, because that is where the
+        /// bore line is held. Canting about the grip would swing the muzzle
+        /// sideways as well as rolling it, which is not what tipping a rifle over
+        /// feels like.
+        ///
+        /// Scaled by the gate so a lowered weapon is not left canted in the hand.
+        /// The commanded angle survives, so raising it again restores the cant.
+        /// </summary>
+        private static void ApplyCant(Transform root, WeaponAnchors anchors, Plugin p)
+        {
+            if (!p.Cfg.CantEnabled.Value) return;
+
+            float roll = p.State.Roll * p.State.Gate;
+            if (Mathf.Abs(roll) < 0.01f) return;
+
+            Vector3 rollPivot = anchors.LeftHand;
+            GameRefs.LocalRotateAround(root, rollPivot, anchors.Bore * roll);
+            GameRefs.LocalRotateAround(root, -rollPivot, Vector3.zero);
         }
 
         /// <summary>

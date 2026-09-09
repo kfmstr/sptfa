@@ -83,6 +83,7 @@ namespace SPTFreeAim
 
             FreeAimPatches.Apply(_harmony = new Harmony(GUID));
             RecoilPatch.Apply(_harmony);
+            SightSwitchPatch.Apply(_harmony);
 
             Log.LogInfo(NAME + " " + VERSION + " loaded. Mode: " + Cfg.Mode.Value +
                         ". F12 to configure, F8 master toggle, F9 HUD, F10 write probe.");

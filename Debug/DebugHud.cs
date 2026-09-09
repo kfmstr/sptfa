@@ -41,6 +41,7 @@ namespace SPTFreeAim.Debugging
             FreeAimState st = p.State;
             FreeAimConfig cfg = p.Cfg;
             float mag = st.Offset.magnitude;
+            Vector3 pivot = cfg.AnchorSnapshot().Pivot(st.AimBlend);
 
             TrackDecay(mag);
 
@@ -67,13 +68,27 @@ namespace SPTFreeAim.Debugging
                         p.Stance.PosePos.x, p.Stance.PosePos.y, p.Stance.PosePos.z, p.Stance)) +
                 Row("aim blend", string.Format("{0:F2}   coupling x{1:F2}", st.AimBlend, cfg.AimCoupling.Value)) +
                 "\n" +
+                // The pivot is the thing being tuned now, so show where it
+                // actually is this frame rather than only what was configured.
+                Row("pivot", string.Format("{0,5:F2} {1,5:F2} {2,5:F2}   {3}",
+                        pivot.x, pivot.y, pivot.z,
+                        st.AimBlend > 0.5f ? "toward BUTTPAD" : "toward GRIP")) +
+                Row("cone now", string.Format("{0:F1} deg  (set {1:F1}, inward x{2:F2})",
+                        st.EffectiveCone(st.Offset, cfg.Snapshot()), cfg.ConeDegrees.Value,
+                        cfg.InwardConeScale.Value)) +
+                Row("cant", string.Format("{0,5:F1} -> {1,5:F1} deg   axis {2}{3}   {4}",
+                        st.Roll, st.RollTarget, cfg.BoreAxisChoice.Value,
+                        cfg.BoreAxisInvert.Value ? "-" : "+",
+                        SightSwitchPatch.Hooked ? "on change-sight key"
+                                                : "<color=#ffcc55>not hooked</color>")) +
+                "\n" +
                 Row("peak offset", string.Format("{0:F1} deg  ({1:F1}s ago)", _peak, _peakAge)) +
                 Row("convergence", ConvergenceEstimate()) +
                 "\n" +
                 Row("probe (F10)", YawWriteProbe.LastResult);
 
-            GUI.Box(new Rect(10, 10, 510, 336), GUIContent.none, _boxStyle);
-            GUI.Label(new Rect(20, 18, 490, 320), "<b>SPT Free Aim</b>\n\n" + body, _style);
+            GUI.Box(new Rect(10, 10, 560, 392), GUIContent.none, _boxStyle);
+            GUI.Label(new Rect(20, 18, 540, 376), "<b>SPT Free Aim</b>\n\n" + body, _style);
         }
 
         private static string Row(string label, string value)

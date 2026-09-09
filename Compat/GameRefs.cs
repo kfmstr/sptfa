@@ -127,6 +127,15 @@ namespace SPTFreeAim.Compat
         public static MethodInfo M_Player_VisualPass;
         public static MethodInfo M_Pwa_AvoidObstacles;
 
+        /// <summary>EFT.Player+FirearmController, resolved for the change-sight hook.</summary>
+        public static Type T_FirearmController;
+
+        /// <summary>
+        /// FirearmController.ChangeAimingMode() - the change-sight action. Optional:
+        /// if it is gone the cant simply does nothing and everything else runs.
+        /// </summary>
+        public static MethodInfo M_ChangeAimingMode;
+
         /// <summary>
         /// The step that rotates the camera toward the weapon after recoil.
         /// Named AddHandRecoilRotateToCamera(float) on 4.1.5. Realism's reference
@@ -207,6 +216,20 @@ namespace SPTFreeAim.Compat
 
                 M_Player_VisualPass = T_Player.GetMethod("VisualPass", ANY);
                 M_Pwa_AvoidObstacles = T_ProceduralWeaponAnimation.GetMethod("AvoidObstacles", ANY);
+
+                // The game's own change-sight action, so the cant rides whatever
+                // key the player has it bound to instead of a key of our own.
+                //
+                // There are TWO overloads - ChangeAimingMode() and
+                // ChangeAimingMode(int) - so this asks for the parameterless one
+                // by signature. GetMethod(name, flags) alone would throw
+                // AmbiguousMatchException here, which is the F19 failure exactly;
+                // naming the signature makes ambiguity impossible rather than
+                // survivable.
+                T_FirearmController = T_Player.GetNestedType("FirearmController", ANY | BindingFlags.Static);
+                if (T_FirearmController != null)
+                    M_ChangeAimingMode = T_FirearmController.GetMethod(
+                        "ChangeAimingMode", ANY, null, Type.EmptyTypes, null);
                 foreach (string n in CameraRecoilMethodNames)
                 {
                     M_Pwa_CameraRecoil = T_ProceduralWeaponAnimation.GetMethod(n, ANY);

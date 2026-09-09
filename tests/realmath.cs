@@ -28,6 +28,12 @@ namespace UnityEngine
         public float x, y, z;
         public Vector3(float x, float y, float z) { this.x = x; this.y = y; this.z = z; }
         public static Vector3 zero { get { return new Vector3(0, 0, 0); } }
+        public float magnitude { get { return (float)Math.Sqrt(x * x + y * y + z * z); } }
+        public static Vector3 operator +(Vector3 a, Vector3 b) { return new Vector3(a.x + b.x, a.y + b.y, a.z + b.z); }
+        public static Vector3 operator -(Vector3 a, Vector3 b) { return new Vector3(a.x - b.x, a.y - b.y, a.z - b.z); }
+        public static Vector3 operator -(Vector3 a) { return new Vector3(-a.x, -a.y, -a.z); }
+        public static Vector3 operator *(Vector3 a, float f) { return new Vector3(a.x * f, a.y * f, a.z * f); }
+        public static Vector3 operator *(float f, Vector3 a) { return a * f; }
         public static Vector3 Lerp(Vector3 a, Vector3 b, float t)
         {
             t = Mathf.Clamp01(t);

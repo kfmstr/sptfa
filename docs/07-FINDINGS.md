@@ -1029,3 +1029,106 @@ Second: I had the evidence and misread it. An earlier Cecil probe printed
 `TotalWeight` twice, I took that for the ambiguous member, and wrote a test
 around it. `TotalWeight` is `Single` on both declarations and resolves fine.
 Printing a probe's output is not the same as reading it.
+
+---
+
+## F20. The pivot is not a point, it is whatever is bracing the weapon
+
+The owner's correction, and it retires two earlier half-answers at once:
+
+> we have 5 dimensions of freedom, one left hand grip, second right hand grip,
+> 3rd butstock back (in case it is fixed on the shoulder), then one rotation
+> dimension around right hand grip (going through pistolet grip) in low ready,
+> and shoulder in aiming, and another rotation dimensions going through the
+> barrel of the gun. Mouse moves left hand, stance defines where butstock and
+> right hand almost not moving (we can have a bit of the leeway when turning),
+> if aiming butstock is always on the shoulder
+
+`docs/02-PLAN.md` said pivot about the shoulder. F12 corrected it to the firing
+hand. Both were right, for different stances, and neither was general: a rifle
+is not a free body spinning about one fixed point. Three contacts constrain it,
+and they do different jobs.
+
+| Contact | Role |
+|---|---|
+| Left hand, handguard | The driving end. This is what the mouse moves. |
+| Right hand, pistol grip | Braced, nearly still, ready to fight recoil at any moment. The pivot while the weapon is up but not shouldered. |
+| Buttstock | Against the hip at low ready; pinned to the shoulder when aiming. The pivot once it is in the pocket. |
+
+So the pivot **slides from the grip to the buttpad as the weapon comes up**, and
+that is why a shouldered rifle swings differently from one held at the ready. It
+is not a preference, so it is not a setting: the blend is the aim blend, because
+"if aiming, the buttstock is always on the shoulder" is a rule.
+
+### Two of the three anchors are measurements, not tuning
+
+Only the grip is a free point to find by eye. The other two follow from it along
+the bore, and their distances are facts about a rifle rather than numbers to
+hunt: about 0.3 m from the pistol grip back to the buttpad, about 0.3 m forward
+to the support hand. Shorter on a folded stock or a stubby handguard.
+
+What genuinely cannot be derived is **which local axis runs down the bore**.
+lualeet's mapping puts pitch on X and yaw on Z, which leaves Y - but that is an
+inference from someone else's axis convention, not a measurement, so it is a
+switch in F12 and not a constant in the source. Same treatment as the invert
+toggles, for the same reason, and F16 is why guessing would be worse than asking.
+
+### Leeway: braced is not rigid
+
+"almost not moving (we can have a bit of the leeway when turning)". A perfectly
+rigid brace means the grip does not move at all and the muzzle swings the whole
+arc, which reads as mechanical. Real bracing gives a little.
+
+Implemented as a small slide of the pivot toward the driving hand - a change of
+**pivot**, not an added translation. That distinction matters: an invented
+translation along axes nobody has verified is exactly how the weapon walked off
+screen in F5. Moving the pivot cannot do that, because the rotation is already
+cancelled by the paired `LocalRotateAround` call.
+
+### The hip is why the cone is not centred on you
+
+At low ready the stock rests against the strong-side hip. Swinging the muzzle
+that way drives the stock inward until the arm runs out of room; swinging the
+other way is unobstructed.
+
+So the cone is asymmetric - and it is implemented by narrowing the CONE rather
+than clamping the offset. A clamp stops the muzzle dead mid-swing, which is not
+what running out of shoulder room feels like. A smaller cone makes the push
+start earlier, so the body begins turning sooner and the gun eases to a stop.
+The constraint fades out with the aim blend: once the stock is in the pocket
+there is no hip to hit.
+
+Yaw only. The hip constrains the horizontal swing, not elevation, and the tests
+assert that pure pitch is untouched.
+
+### Roll: the freedom nothing was using
+
+The third rotational axis runs down the bore. It earns its place twice over -
+canting to a 45 degree offset optic, and holding the weapon tipped in a doorway
+so it stays controlled against the shoulder without the receiver filling the
+view. The owner wanted it on the **change-sight key**, and to work whether or
+not a canted sight is fitted.
+
+That is a Harmony postfix on `FirearmController.ChangeAimingMode()`, not a
+keybind of our own: the player already has that key bound and already reaches
+for it. There are two overloads, so the lookup names the signature -
+`GetMethod(name, flags, null, Type.EmptyTypes, null)` - which makes ambiguity
+impossible rather than merely survivable. F19 is the reason that is worth
+spelling out.
+
+Rolled about the **support hand**, because that is where the bore line is held.
+Rolling about the grip would swing the muzzle sideways as well, which is not
+what tipping a rifle over does.
+
+### The lesson worth keeping
+
+I offered three options for the pivot and the owner's answer began "I don't
+understand what you wrote in either one of these options". He was right to say
+so. I had asked which interpolation scheme to use; he was describing the
+mechanism, in terms of hands and contact points. The options were phrased in the
+vocabulary of the implementation rather than the thing being modelled, so they
+were unanswerable even though the underlying question was reasonable.
+
+When someone describes a physical system, the question worth asking is about the
+system. `AnchorGrip`, `StockBehindGrip` and `LeftHandAheadOfGrip` are named after
+what they are for the same reason.

@@ -31,8 +31,21 @@ namespace SPTFreeAim
         public ConfigEntry<float> AimCoupling;
         public ConfigEntry<float> DisengageBoost;
 
-        // ---- Pivot -------------------------------------------------------
-        public ConfigEntry<Vector3> PivotOffset;
+        // ---- Anchors (replaces the single pivot) --------------------------
+        public ConfigEntry<Vector3> AnchorGrip;
+        public ConfigEntry<BoreAxis> BoreAxisChoice;
+        public ConfigEntry<bool> BoreAxisInvert;
+        public ConfigEntry<float> StockBehindGrip;
+        public ConfigEntry<float> LeftHandAheadOfGrip;
+        public ConfigEntry<float> AnchorLeeway;
+        public ConfigEntry<float> InwardConeScale;
+        public ConfigEntry<bool> StrongSideRight;
+
+        // ---- Cant --------------------------------------------------------
+        public ConfigEntry<bool> CantEnabled;
+        public ConfigEntry<float> CantAngle;
+        public ConfigEntry<float> CantSpeed;
+
         public ConfigEntry<bool> ApplyWeaponOffset;
         public ConfigEntry<bool> ApplyCameraOffset;
         public ConfigEntry<bool> InvertYaw;
@@ -153,19 +166,95 @@ namespace SPTFreeAim
                 "down, reload, sprint). Stops the offset lingering through an animation.",
                 new AcceptableValueRange<float>(0f, 20f)));
 
-            // -- pivot --
-            PivotOffset = cfg.Bind(S_PIVOT, "Pivot offset", new Vector3(0f, 0.1f, 0f),
-                "Where the weapon hinges, as a point in the weapon root's local space.\n" +
+            // -- anchors --
+            AnchorGrip = cfg.Bind(S_PIVOT, "Anchor: pistol grip", new Vector3(0.2f, 0.1f, 0f),
+                "The right hand on the pistol grip, as a point in the weapon root's local space. " +
+                "The braced contact: nearly still, ready to fight recoil at any moment. This is " +
+                "the pivot while the weapon is up but NOT shouldered.\n" +
                 "\n" +
-                "NOT the shoulder. docs/02-PLAN.md said to pivot about roughly the shoulder; " +
-                "measured in Bodycam the gun hinges about the FIRING HAND - grip and trigger - " +
-                "and the buttstock swings away from the body. See docs/07-FINDINGS.md F12.\n" +
+                "The default is the value you found by eye in the first tuning pass, not a number " +
+                "copied from anywhere (docs/07-FINDINGS.md F16). The other two anchors are derived " +
+                "from this one, so this is the point to get right first: set cone to 25 so the " +
+                "swing is obvious, change one component at a time, and watch which part of the " +
+                "weapon stays still.");
+
+            BoreAxisChoice = cfg.Bind(S_PIVOT, "Bore axis", BoreAxis.Y,
+                "Which local axis runs down the barrel. The other two anchors sit along it and the " +
+                "cant rolls about it, so this has to be right before either means anything.\n" +
                 "\n" +
-                "The default (0, 0.1, 0) is lualeet's original single-axis value, kept only so " +
-                "behaviour does not change until you tune it. To find the grip: set cone to 25 so " +
-                "the swing is obvious, then change one component at a time and watch which part of " +
-                "the weapon stays still. The component that stops the grip moving is the one you " +
-                "want.");
+                "It cannot be derived: lualeet's mapping puts pitch on X and yaw on Z, which leaves " +
+                "Y as the bore, but that is an inference and not a measurement. Find it the same " +
+                "way as the invert toggles - set the cant angle to 45, press your change-sight key, " +
+                "and try each axis until the gun rolls rather than pitching or yawing.");
+
+            BoreAxisInvert = cfg.Bind(S_PIVOT, "Bore axis points backward", false,
+                "Flip if the stock and support hand come out swapped - the gun will pivot about a " +
+                "point in front of the muzzle when aiming, which is unmistakable.");
+
+            StockBehindGrip = cfg.Bind(S_PIVOT, "Buttpad behind grip (m)", 0.30f, new ConfigDescription(
+                "Distance from the pistol grip back to the buttpad. This is a real measurement of " +
+                "a rifle rather than something to find by eye: about 0.30 m on a mid-size rifle, " +
+                "shorter on a folded or bullpup layout.\n" +
+                "\n" +
+                "It matters because it IS the pivot once the weapon is shouldered. The stock is " +
+                "pinned to your shoulder, so that is what the gun turns about.",
+                new AcceptableValueRange<float>(0f, 1f)));
+
+            LeftHandAheadOfGrip = cfg.Bind(S_PIVOT, "Support hand ahead of grip (m)", 0.30f, new ConfigDescription(
+                "Distance from the pistol grip forward to the support hand on the handguard. " +
+                "About 0.30 m with a normal C-clamp hold, less on a short handguard.\n" +
+                "\n" +
+                "The support hand is the driving end - it is what the mouse moves - and it sits on " +
+                "the bore line, which is why the cant rolls about it.",
+                new AcceptableValueRange<float>(0f, 1f)));
+
+            AnchorLeeway = cfg.Bind(S_PIVOT, "Anchor leeway", 0.08f, new ConfigDescription(
+                "How much the braced contact gives, 0..1.\n" +
+                "\n" +
+                "Zero is a perfectly rigid brace: the grip does not move at all. Real bracing is " +
+                "not rigid - there is a little travel when you turn - so the centre of rotation " +
+                "slides slightly toward the driving hand. Small values only; at 1 the gun swings " +
+                "about the wrong end entirely.",
+                new AcceptableValueRange<float>(0f, 0.5f)));
+
+            InwardConeScale = cfg.Bind(S_PIVOT, "Inward cone scale", 0.55f, new ConfigDescription(
+                "How much of the cone survives on the side the buttstock cannot swing to.\n" +
+                "\n" +
+                "At low ready the stock rests against your strong-side hip. Swinging the muzzle " +
+                "that way drives the stock into your body and it runs out of room; swinging the " +
+                "other way is free. So the cone is not centred on you.\n" +
+                "\n" +
+                "1.0 restores the old symmetric behaviour. 0.55 gives noticeably less room inward. " +
+                "This narrows the cone rather than clamping the offset, so the gun eases to a stop " +
+                "instead of hitting a wall - and it fades out as you shoulder the weapon, because " +
+                "once the stock is in the pocket there is no hip to hit.",
+                new AcceptableValueRange<float>(0.1f, 1f)));
+
+            StrongSideRight = cfg.Bind(S_PIVOT, "Strong side is right", true,
+                "Which side the stock is braced on. If the resistance turns up on the wrong side, " +
+                "flip this - the yaw sign convention decides it and it is quicker to switch than " +
+                "to reason about.");
+
+            // -- cant --
+            CantEnabled = cfg.Bind(S_PIVOT, "Cant on sight switch", true,
+                "Roll the weapon about the bore when you press your CHANGE SIGHT key - the game's " +
+                "own action, so it works on whatever you have it bound to.\n" +
+                "\n" +
+                "Press once to cant, press again to come back upright. It rolls whether or not a " +
+                "canted sight is actually fitted, because the hold is useful on its own: it keeps " +
+                "the gun controlled against the shoulder in a doorway without the receiver filling " +
+                "your view.");
+
+            CantAngle = cfg.Bind(S_PIVOT, "Cant angle (deg)", 45f, new ConfigDescription(
+                "How far the weapon rolls. 45 is the usual offset-sight mount angle. Negative " +
+                "rolls the other way.",
+                new AcceptableValueRange<float>(-90f, 90f)));
+
+            CantSpeed = cfg.Bind(S_PIVOT, "Cant speed (1/s)", 12f, new ConfigDescription(
+                "How fast the roll settles, same exponential form as the body spring. 12/s is " +
+                "about a quarter second - fast enough to be a deliberate action, slow enough to " +
+                "read as a movement.",
+                new AcceptableValueRange<float>(1f, 40f)));
 
             ApplyWeaponOffset = cfg.Bind(S_PIVOT, "Apply weapon offset", true,
                 "Rotate the weapon by the offset. Turn OFF to isolate a problem: with this off " +
@@ -390,7 +479,25 @@ namespace SPTFreeAim
                 SpringK = SpringK.Value,
                 PushFactor = PushFactor.Value,
                 AimCoupling = AimCoupling.Value,
-                DisengageBoost = DisengageBoost.Value
+                DisengageBoost = DisengageBoost.Value,
+                InwardConeScale = InwardConeScale.Value,
+                StrongSideSign = StrongSideRight.Value ? 1f : -1f
+            };
+        }
+
+        /// <summary>
+        /// The three contact points, rebuilt each frame so F12 edits apply live.
+        /// Only the grip is a free point; the others follow from it along the bore.
+        /// </summary>
+        public WeaponAnchors AnchorSnapshot()
+        {
+            return new WeaponAnchors
+            {
+                Grip = AnchorGrip.Value,
+                Bore = WeaponAnchors.AxisVector(BoreAxisChoice.Value, BoreAxisInvert.Value),
+                StockBehind = StockBehindGrip.Value,
+                LeftHandAhead = LeftHandAheadOfGrip.Value,
+                Leeway = AnchorLeeway.Value
             };
         }
     }

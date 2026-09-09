@@ -84,6 +84,20 @@ namespace SPTFreeAim.Core
         /// <summary>Smoothed 0..1 aiming-down-sights blend, for the aim coupling multiplier.</summary>
         public float AimBlend;
 
+        /// <summary>
+        /// Roll about the bore, in degrees. The weapon's third rotational freedom,
+        /// and the one nothing in the mod touched until now: canting the gun to
+        /// use an offset sight, or to keep it controlled close to the shoulder in
+        /// a doorway without the receiver filling the view (F20).
+        ///
+        /// Kept apart from Offset because it is COMMANDED, not driven. The mouse
+        /// never produces roll; a deliberate action does.
+        /// </summary>
+        public float Roll;
+
+        /// <summary>Where the roll is heading. Set by the sight-switch action.</summary>
+        public float RollTarget;
+
         private Vector2 _lastRaw;
         private bool _seeded;
 
@@ -93,6 +107,7 @@ namespace SPTFreeAim.Core
             Offset = Vector2.zero;
             RecoilOffset = Vector2.zero;
             MouseDelta = Vector2.zero;
+            Roll = RollTarget = 0f;
             _seeded = true;
         }
 
@@ -150,7 +165,7 @@ namespace SPTFreeAim.Core
                     Gun = AngleMath.Wrap180(Gun + MouseDelta);
 
                     Vector2 off = AngleMath.Delta(Body, Gun);
-                    if (off.magnitude > p.ConeDegrees)
+                    if (off.magnitude > EffectiveCone(off, p))
                         Body = AngleMath.Wrap180(Body + MouseDelta * p.PushFactor);
 
                     Body = AngleMath.SpringToward(Body, Gun, k, dt);
@@ -168,7 +183,7 @@ namespace SPTFreeAim.Core
                     Gun = raw;
 
                     Vector2 off = AngleMath.Delta(Body, Gun);
-                    if (off.magnitude > p.ConeDegrees)
+                    if (off.magnitude > EffectiveCone(off, p))
                         Body = AngleMath.Wrap180(Body + MouseDelta * p.PushFactor);
 
                     Body = AngleMath.SpringToward(Body, Gun, k, dt);
@@ -217,6 +232,52 @@ namespace SPTFreeAim.Core
         }
 
         /// <summary>
+        /// The cone, narrowed on the side where the buttstock would have to swing
+        /// through the body.
+        ///
+        /// At low ready the stock rests against the strong-side hip. Swinging the
+        /// muzzle toward that side drives the stock inward, and it runs out of
+        /// room - the arm simply cannot take it further. Swinging the other way is
+        /// unobstructed, so the cone is not centred on the body.
+        ///
+        /// This narrows the CONE rather than clamping the offset, which is what
+        /// makes it a resistance instead of a wall: a smaller cone means the push
+        /// starts earlier, so the body begins turning sooner and the gun eases to
+        /// a stop. A clamp would stop the muzzle dead mid-swing, which is not what
+        /// running out of shoulder room feels like.
+        ///
+        /// Fades out as the weapon comes up: once the stock is in the shoulder
+        /// pocket there is no hip to hit, and the cone is symmetric again.
+        /// </summary>
+        public float EffectiveCone(Vector2 off, Tuning p)
+        {
+            // 1.0 means symmetric. So does 0, which cannot come from the config
+            // (its range starts at 0.1) and therefore means the Tuning struct was
+            // built without this field - an older call site, or a harness. A
+            // default-constructed zero must not silently mean "fully constrained";
+            // that is the kind of trap that reads as a bug in the feel and gets
+            // hunted in the wrong file.
+            if (p.InwardConeScale <= 0f || p.InwardConeScale >= 0.999f) return p.ConeDegrees;
+
+            float mag = off.magnitude;
+            if (mag < 0.0001f) return p.ConeDegrees;
+
+            float inward = Mathf.Clamp01(p.StrongSideSign * off.x / mag);
+            float shape = inward * (1f - AimBlend);
+            return p.ConeDegrees * Mathf.Lerp(1f, p.InwardConeScale, shape);
+        }
+
+        /// <summary>
+        /// Ease the roll toward its commanded angle. Same exponential form as the
+        /// body spring, for the same reason: frame-rate independence.
+        /// </summary>
+        public void UpdateRoll(float dt, float speed)
+        {
+            if (dt <= 0f) return;
+            Roll += (RollTarget - Roll) * (1f - Mathf.Exp(-speed * dt));
+        }
+
+        /// <summary>
         /// Aim blend is owned by StanceState now (it needs it to pick the stance),
         /// and mirrored here because the coupling maths and the recoil patch both
         /// read it. One updater, one source of truth.
@@ -255,6 +316,22 @@ namespace SPTFreeAim.Core
             public float PushFactor;
             public float AimCoupling;
             public float DisengageBoost;
+
+            /// <summary>
+            /// How much of the cone survives on the side the buttstock cannot
+            /// swing to. 1 = symmetric, the old behaviour. 0.5 = half the room
+            /// swinging inward.
+            /// </summary>
+            public float InwardConeScale;
+
+            /// <summary>
+            /// +1 when swinging the muzzle toward positive yaw drives the stock
+            /// into the body, -1 when it is the other way. A right-handed shooter
+            /// braces the stock on the right hip, so swinging right is the
+            /// constrained direction - but which sign that is on screen depends
+            /// on the yaw convention, so it is a switch rather than a constant.
+            /// </summary>
+            public float StrongSideSign;
         }
     }
 }
