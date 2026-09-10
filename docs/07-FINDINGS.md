@@ -1743,3 +1743,659 @@ This is the same failure as F21 and F23 in a different costume: reasoning
 confidently from a partial search, when widening the search was a single cheap
 command. The owner has now caught it three times by simply asking whether I was
 sure.
+
+---
+
+## F29. Three bugs, one log, and an error handler that repeated the error
+
+> when I click on these buttons that add perepherial vision nothing happens ...
+> at some point the free aim completely stopped working regardless of what I was
+> trying to turn on/off
+
+The log answered all of it in six lines.
+
+### 1. The optic housing did nothing, silently
+
+```csharp
+public static Transform GetCurrentSightBone(object pwa)
+{
+    object scope = M_CurrentScope.Get(pwa);   // never bound
+    if (scope == null) return null;
+```
+
+`M_CurrentScope` was declared and never `Bind`ed. An unresolved `Member` returns
+null from `Get`, so this answered "no optic fitted" on every weapon, forever. The
+housing effects collected nothing and did nothing.
+
+Nothing threw, nothing logged, and the HUD dutifully reported the truth as it
+understood it - which is why it read "always off even with optics". A silent
+correct-looking negative is the worst failure mode there is, and this file
+already had a comment about that exact hazard in `Member` itself.
+
+### 2. AimDeltaFov is a const
+
+```
+AimDeltaFov   Single   static=True   literal(const)=True   constant=15
+```
+
+Writing a const throws `FieldAccessException`. Worse, it could never have worked
+even if it were writable: the game has `15` compiled into every use site, so
+nothing reads the field at runtime at all.
+
+Cecil reports a const as a static field. `IsLiteral` is the only thing that
+separates them and I did not check it. That is now checked at resolve time, and
+the reason is carried to the HUD instead of discovered by throwing mid-frame.
+
+### 3. The error handler performed the failing operation
+
+This is the one that took the mod down:
+
+```
+[Error] Both eyes open failed, switching it off: FieldAccessException
+  at GameRefs.SetAimFovNarrowing
+  at FreeAimPatches.ApplyBothEyes
+[Error] Free aim frame failed, disabling to avoid log spam: FieldAccessException
+  at GameRefs.ReleaseAimFov            <-- inside the catch block
+  at FreeAimPatches.Frame
+[Error] SPT Free Aim disabled for this session.
+```
+
+The write threw. The catch handler switched the feature off and called
+`ReleaseAimFov()` to hand the stock value back - which performed the same write,
+threw again, and that second exception escaped the handler entirely. The outer
+frame guard caught it and emergency-disabled everything.
+
+So the isolation added in F19 worked exactly as designed and was defeated by the
+cleanup inside it. **An error handler must not repeat the operation that failed.**
+`ReleaseAimFov` now cannot throw, and the handler no longer calls it.
+
+### 4. And it stayed dead, because the rollback undid F19
+
+`EmergencyDisable` was made clearable by the master toggle in `42b74a5`. The
+rollback to `58c19a1` restored `Plugin.cs` from before that fix, so the flag was
+permanent for the session again - "regardless of what I was trying to turn
+on/off". Restored.
+
+Worth noting as its own hazard: a rollback undoes the fixes as well as the
+mistakes, and a pure safety net is exactly the sort of thing nobody thinks to
+check afterwards. I did audit that rollback for the licence work and for the
+crash fix in `Member`; I did not think about `Plugin.cs`.
+
+### The lesson worth keeping
+
+Every one of these was visible in the log within seconds of asking for it. The
+mod's own diagnostics did their job - the stack traces name the exact methods -
+and the fault was that nobody read them for two rounds of changes.
+
+Ask for the log first. It is cheaper than any amount of reasoning about what
+might be wrong.
+
+---
+
+## F30. One line in the log, and none of it was mine
+
+> please check the log, nothing worked
+
+```
+[Info :BepInEx] Loading [SPT Free Aim 0.1.0]
+[Info :BepInEx] Loading [DrakiaXYZ-SearchOpenContainers 1.5.0]
+```
+
+That is the entire contribution of the mod to a full session. `Awake` threw
+before reaching its first `Log` call, and BepInEx does not surface an exception
+thrown inside a plugin's `Awake` - Unity swallows it into the player log.
+
+So the mod ran, failed, and said nothing. Twice in two rounds I have gone hunting
+for a cause that the code could have named itself in one line.
+
+### The immediate cause
+
+The prime suspect is the compile-time reference to
+`Unity.Postprocessing.Runtime` that F28 introduced. If that assembly is not
+resolvable in the plugin's load context, the type load fails, and a failure of
+that shape lands exactly here: after BepInEx logs "Loading", before any of the
+plugin's own code runs.
+
+I have not proved it, and saying so matters after F22. What is certain is that
+the reference was the only new thing between a build that logged normally and a
+build that logged nothing, and that it is the only change of a kind that can fail
+at *load* rather than at *call*.
+
+So the depth of field is removed for now, along with the csproj reference.
+It was off by default, nobody had seen it work, and it was the newest and least
+load-bearing thing in the build. Getting the optic housing working - which is
+what was actually asked for - matters more than keeping an unproven feature that
+might be preventing the whole mod from starting.
+
+It can come back through reflection, with no assembly reference and therefore no
+way to fail at load. That is how it should have been written in the first place,
+for a type that lives outside the game's main assembly.
+
+### The fix that should have existed from day one
+
+```csharp
+private void Awake()
+{
+    Instance = this;
+    Log = Logger;
+    Log.LogInfo("Awake: starting. " + VERSION);
+    try { AwakeCore(); }
+    catch (Exception e)
+    {
+        Log.LogError("SPT Free Aim FAILED TO START. Nothing below this line ran:\n" + e);
+    }
+}
+```
+
+Plus breadcrumbs between the stages, so the next silent failure names the stage
+it died in rather than leaving a gap to be reasoned about.
+
+`GameRefs.Resolve()` was already fully wrapped and reports its own failures
+precisely - that was designed carefully, in the first week, because it was the
+part expected to break on a game update. `Awake` itself, the thing that calls it,
+had no guard at all. The careful part was surrounded by an unguarded one.
+
+### The lesson worth keeping
+
+Diagnostics are not a debugging aid to add when something goes wrong. They are
+the difference between a bug report that costs one message and one that costs
+four. This mod has an on-screen HUD, a probe key, a findings document and 60
+tests, and it could not tell its owner why it failed to start.
+
+Every entry point that can throw gets a handler that logs. Not the frame path
+only - the frame path was already handled - but every one.
+
+---
+
+## F31. A build that never ran, because I can write files but not delete them
+
+> nope still doesn't work
+
+The log was identical. So was the DLL:
+
+```
+SPTFreeAim.dll   102,400 bytes   mtime 1788995601319   (unchanged)
+```
+
+My build of the fix was 93,696 bytes. The deployed plugin had not been rebuilt
+at all, so the run that produced that log was the OLD binary. Nothing I changed
+had ever been compiled.
+
+### Why the build failed
+
+```
+Patches/FocusDepth.cs   6,845 bytes   still on disk
+```
+
+F30 removed the depth of field: I deleted `FocusDepth.cs` in the working copy and
+removed the `Unity.Postprocessing.Runtime` reference from the csproj, and synced
+the changed files.
+
+**`device_commit_files` writes files. It cannot delete them.** So the csproj lost
+the reference while the source file that needs it stayed exactly where it was.
+Every build since has failed on that file, and Visual Studio does what it always
+does with a failed build: leaves the previous DLL in place. The game kept loading
+a binary from two fixes ago.
+
+Emptied to a comment block rather than deleted, since the sync can overwrite but
+not remove. A comment-only `.cs` compiles to nothing.
+
+### What made it invisible
+
+Three separate things each hid it:
+
+- A failed build leaves a working DLL behind, so the game still runs and still
+  logs. Nothing announces staleness.
+- The mod's version string never changes, so `SPT Free Aim 0.1.0` in the log says
+  nothing about which build it is.
+- I verified my own build compiled, in my own tree, against my own file list -
+  which was not his file list, because his still had the file I had "deleted".
+
+I had the evidence to catch it immediately and did not look: the DLL's size and
+timestamp were in a directory listing I had already run, one round earlier, and I
+read the mtime as "recent, so he rebuilt" without comparing it to the byte count
+of what I had actually built.
+
+### What changes
+
+**Check the artefact, not the source.** Before diagnosing behaviour, confirm the
+binary under test is the binary in question - size and mtime against the build
+just made. Two numbers, already on screen.
+
+**A sync that cannot delete is a sync that can break a build.** Any change that
+removes a file has to be sent as an emptied file, not as an absence, and said out
+loud so the user can delete it properly.
+
+**Version stamps earn their keep.** `0.1.0` has been the version for the entire
+project. A build identifier in the startup line would have answered "is this even
+the new code" in one glance, every time, for free.
+
+---
+
+## F32. The label that killed the plugin
+
+The `Awake` guard from F30 earned itself back in one run:
+
+```
+[Info ] Awake: starting. 0.1.0
+[Info ] Awake: binding config
+[Error] SPT Free Aim FAILED TO START. Nothing below this line ran:
+System.ArgumentException: Cannot use any of the following characters in
+section and key names: = \n \t \ " ' [ ]
+Parameter name: key
+  at BepInEx.Configuration.ConfigDefinition..ctor
+  at BepInEx.Configuration.ConfigFile.Bind[T]
+  at SPTFreeAim.FreeAimConfig.Bind
+```
+
+In F29 I renamed a config key to `"Keep peripheral vision when aiming [BROKEN]"`,
+to make it obvious in the F12 menu that the feature could not work. Square
+brackets are illegal in a BepInEx key - they are the ini section syntax - so the
+bind threw, `Awake` died on its second statement, and the entire mod failed to
+start.
+
+A warning label about one broken feature broke everything. The irony is not the
+point; the point is that a *cosmetic* edit to a string took the whole plugin
+down, and nothing between writing it and shipping it could have noticed.
+
+### And the NullReferenceException on top
+
+```
+NullReferenceException at SPTFreeAim.Plugin.Update ()
+```
+
+`Update` already opened with `if (Instance == null || Cfg == null) return;`, and
+that guard is worthless here:
+
+```csharp
+Cfg = new FreeAimConfig();   // Cfg is now non-null
+Cfg.Bind(Config);            // throws - every ConfigEntry inside stays null
+```
+
+`Cfg` is assigned before `Bind` runs, so after the throw it is a perfectly valid
+object full of null entries, and the next line - `Cfg.ToggleKey.Value` - threw
+once per frame forever.
+
+Replaced with a `_started` flag set on the final line of `AwakeCore`. It means
+"all of it ran", which is the only question worth asking, and `Plugin.Active`
+now checks it too. A failed start is silent from then on rather than a stack
+trace at 120 Hz.
+
+### The test
+
+`tests/ConfigKeyTests.cs` reads `FreeAimConfig.cs` as text and checks every
+`cfg.Bind` key against BepInEx's own illegal set, plus duplicate section+key
+pairs, which throw just as fatally. Verified against the real bug: putting the
+bracket back fails the check.
+
+Reading source as text rather than running it is the right call here - running it
+needs BepInEx and the game, and the rule being enforced is about naming, which is
+plainly visible in the source.
+
+### The lesson worth keeping
+
+Config keys are an API with a validator, not labels. Four of the last five
+failures in this project have been in the plumbing around the mechanic rather
+than the mechanic itself: a const field, an unbound Member, a file that could not
+be deleted, and now a string with a bracket in it. The aiming maths has been
+right for days.
+
+The guard added in F30 turned this from a silent death into a four-line diagnosis.
+That is what it was for, and it paid for itself on its first run.
+
+---
+
+## F33. Zero renderers, because the "sight bone" is a camera
+
+With the plugin finally starting, the housing collector ran for the first time
+and reported precisely what was wrong:
+
+```
+Optic: SightNBone.Bone -> SightNBone.Bone (field, writable)
+Optic housing: 0 housing renderers on mod_aim_camera, 0 kept (lens/reticle)
+```
+
+`SightNBone.Bone` is **`mod_aim_camera`**. That name is in the assembly, as a
+constant on the very class the field belongs to:
+
+```
+ProceduralWeaponAnimation.MOD_CAMERA_BONE = "mod_aim_camera"
+```
+
+It is the transform the game aligns the eye to when aiming - an empty node. There
+are no meshes under it, on any weapon, ever. So `GetComponentsInChildren<Renderer>`
+returned an empty array and the feature did nothing, correctly, every frame.
+
+The optic's body lives further up the hierarchy. `GetOpticHousingRoot` walks up
+from the aim bone, preferring the ancestor that carries the optic's own visual
+controller, then one carrying `OpticSight`, then simply the nearest ancestor that
+has meshes - stopping before the weapon root, since grabbing that would hide the
+whole gun.
+
+### The heuristic is a guess, so it prints its evidence
+
+I cannot see this hierarchy. The walk above is a reasonable guess about a scene
+graph I am inferring from type names, which is exactly the shape of reasoning
+that produced F21 and F28.
+
+So `LogAncestorChainOnce` prints the chain from the aim bone to the weapon root
+with a renderer count at each level, and flags which nodes carry `OpticSight` or
+`SightModVisualControllers`:
+
+```
+Optic hierarchy from the aim bone up:
+    * mod_aim_camera        renderers=0
+      mod_scope             renderers=4  [OpticSight]
+      mod_mount             renderers=2
+      Weapon_root           renderers=37  <- weapon root, stopping
+```
+
+One raid makes the real shape visible. If the heuristic picks the wrong node, the
+log says which one it should have picked, and the fix is a line.
+
+### Also worth knowing
+
+The log shows AmandsGraphics patching `OpticSight.OnEnable` and
+`OpticComponentUpdater.Awake`. Another mod is already doing work on these exact
+objects, so if the housing effects look wrong rather than absent, that is the
+first thing to test against by disabling it for a raid.
+
+### The lesson worth keeping
+
+The name was in the assembly the whole time. `MOD_CAMERA_BONE = "mod_aim_camera"`
+sits four lines from `LINE_OF_SIGHT_P0`, in a probe output I read and quoted in
+F21. I took `SightNBone.Bone` to mean "the sight's transform" because the type is
+called `SightNBone` and the field is called `Bone`, and never checked what it
+actually pointed at.
+
+Second time in this project that a plainly-named member did something other than
+what its name implied - `LocalRotateAround(center, eulerRotation)` was the first.
+Names are a hypothesis. The log is the evidence.
+
+---
+
+## F34. A material with a _Color that ignores it, and a DOF that fails safe
+
+Doubling and hiding work. Transparency does not, and the log says why by saying
+nothing at all: there is no "no colour property" warning, so `SetAlpha` found
+`_Color`, wrote to it, and reported success.
+
+The material has a colour. Its **shader** renders opaque and ignores the alpha
+channel entirely.
+
+Worse, the code around the write was theatre:
+
+```csharp
+m.SetInt("_SrcBlend", ...);
+m.SetInt("_DstBlend", ...);
+m.SetInt("_ZWrite", 0);
+m.EnableKeyword("_ALPHABLEND_ON");
+```
+
+Those are **Unity Standard shader** property names. EFT's weapon shaders have
+none of them, and `SetInt` on a property a shader does not declare is a silent
+no-op. Four lines that looked like they configured blending and did nothing.
+
+A material cannot be made transparent by asking politely. The shader has to be
+one that blends, so the housing materials are now replaced with copies on a
+shader that does - carrying the original's `_MainTex` and tint, with the alpha
+applied. `Shader.Find` only returns shaders included in the build, so a list is
+tried in order of likelihood and the result is logged:
+
+```
+Optic housing: looking for a shader that blends -
+    absent  Unlit/Transparent
+    FOUND   Sprites/Default
+    ...
+  using: Sprites/Default
+```
+
+And the housing's own materials are printed once, with their shader names and
+which properties they actually declare, because assuming a shader's capabilities
+from the presence of `_Color` is exactly what went wrong.
+
+If nothing blends, it says so and falls back to hiding. The **doubling is
+unaffected either way**, and remains the more faithful effect.
+
+### The depth of field, resolved by name
+
+Back, and rewritten so that every post-processing type is looked up by name at
+runtime. The first version referenced `Unity.Postprocessing.Runtime` at compile
+time, and a reference that fails to resolve kills the plugin at LOAD - after
+BepInEx logs "Loading", before any of the mod's own code runs, with no
+diagnostics attached (F30, F31).
+
+That risk is not worth taking for an optional visual effect. Nothing in
+`FocusDepth` can now stop the mod starting; the worst case is one warning and a
+feature that stays off. Verified by checking the built assembly's reference list:
+
+```
+confirmed: no Unity.Postprocessing reference in the output assembly
+```
+
+One detail that would have made it silently do nothing: a PPv2
+`ParameterOverride` only participates when its `overrideState` is set. Writing
+`.value` alone leaves the effect reading the profile default, so `Override()` is
+called for each on setup.
+
+### The lesson worth keeping
+
+Both halves of this are the same mistake in different clothes: **an API call that
+succeeds is not an API call that did something.** `SetInt` on an absent property
+returns quietly. `SetValue` on a const throws, which is better. Writing `.value`
+without `overrideState` succeeds and is ignored.
+
+Where a write can be silently discarded, the only honest test is to look at the
+result - which is why the shader search, the material list and the housing
+renderer count are all printed rather than assumed.
+
+---
+
+## F35. Tarkov already had the depth of field. I was building a second one.
+
+> **Superseded in part by F36.** The conclusion - that the game already owns a
+> depth of field and it should be driven rather than duplicated - holds. The
+> effect named here is the wrong one: `CameraManager._depthOfField` is PPv2 and
+> only `SetZBlur` reads it. The live one is `EffectsController._dof`.
+
+The owner asked for the gun to go soft while the eye is focused downrange, and
+added: *"I think Tarkov has something like that already."*
+
+He was right, and it took one Cecil probe to prove it:
+
+```
+F  CameraManager._postProcessVolume : PostProcessVolume
+F  CameraManager._depthOfField      : DepthOfField
+F  CameraManager._postProcessLayer  : PostProcessLayer
+F  EffectsController._dof           : DepthOfField
+REF Unity.Postprocessing.Runtime, Version=0.0.0.0
+```
+
+A live PostProcessing v2 `DepthOfField`, already in the game's own volume, on the
+game's own layer, in the game's own render order. Everything F28 through F34 was
+spent trying to build beside it — a volume to create, a layer mask to guess, a
+blend distance to get right, and a real chance of two DOF passes fighting each
+other for the same frame.
+
+So this drives **that** instead:
+
+```csharp
+CameraManager.Instance -> _depthOfField -> focusDistance / aperture / focalLength
+```
+
+all resolved by name at runtime through `Compat/GameRefs.cs`, with no compile-time
+reference to `Unity.Postprocessing.Runtime` (F30's rule: a reference that fails to
+resolve kills the plugin at LOAD, before any of its own code runs, with no
+diagnostics attached).
+
+### Focus follows the eye, not the gun
+
+`FocusDepth.FocusDistance` raycasts down the middle of the **view**, not down the
+bore, and focuses on whatever it hits — capped at `DOF max focus distance`, which
+is also the fallback when the ray hits nothing, i.e. focus at infinity.
+
+That choice is the whole point of the feature in a free-aim mod. Free aim means
+the gun is usually pointing somewhere the eye is not, and the eye is the thing
+that focuses. Focusing down the bore would sharpen whatever the barrel happened
+to be crossing, which is exactly backwards.
+
+### Aperture is the strength dial
+
+```csharp
+float aperture = Mathf.Lerp(22f, o.Aperture, w);
+```
+
+Rather than toggling the effect on and off as the weapon comes up, the aperture
+blends from a nearly-closed f/22 (deep focus, nothing visibly blurred) toward the
+configured f-stop. Shouldering the weapon *eases* into focus instead of snapping,
+and the game's own effect stays enabled the whole time rather than flickering.
+
+### Every stock value is captured, and handed back
+
+The effect belongs to the game, not to this mod. `CaptureStock()` runs once at
+resolve time and `ReleaseDepthOfField()` restores focus distance, aperture, focal
+length and the `active` flag — and never throws, so a failure to release cannot
+cascade the way F29's did. Without this, a modified DOF would follow the player
+out of the raid and into the hideout.
+
+One PPv2 detail that would have made all of it silently do nothing, and is worth
+repeating from F34: a `ParameterOverride<T>` only participates when its
+`overrideState` is true. `Write()` sets both `value` and `overrideState` on every
+parameter, every time.
+
+### What was removed, and why
+
+Transparent / doubled / hide are gone from `Patches/OpticHousing.cs` (emptied to a
+stub — the sync tool writes but cannot delete, F31).
+
+Doubling and hiding worked. **Transparency never did, and the reason is worth
+recording:** the implementation swapped the housing's materials onto a shader that
+blends, copying `_MainTex` across. EFT's weapon materials do not carry their
+albedo in `_MainTex`. So the replacement shader received no texture and drew flat
+**black** — which is why the owner saw the sight turn black rather than
+see-through. It also failed to restore on un-aim, so the black stayed.
+
+That is a third instance of F34's lesson wearing different clothes: **an API call
+that succeeds is not an API call that did something.** `SetInt` on an absent
+shader property returns quietly. `SetValue` on a const throws — better.
+`material.mainTexture` on a material with no albedo there returns null and the
+shader draws black — no error at all.
+
+### The lesson worth keeping
+
+Before building a system, check whether the host already owns one. Seven findings
+of effort went into approximating an effect that was sitting in a field on a
+singleton the mod already had a handle on.
+
+The owner found it by remembering the game. I found it by probing the assembly —
+which I could have done at F26 for the cost of one command.
+
+---
+
+## F36. Two DepthOfFields, and I wired up the dead one
+
+The owner asked for the gun to blur while aiming and added: *"I think Tarkov has
+something like that already."* He was right twice over, and my first attempt
+still got it wrong, because the game has **two** depth-of-field effects and only
+one of them is alive.
+
+```
+CameraManager._depthOfField : UnityEngine.Rendering.PostProcessing.DepthOfField
+    store  CameraManager.method_2      <- assigned once at init
+    read   CameraManager.SetZBlur      <- exactly one consumer
+
+EffectsController._dof      : UnityStandardAssets.ImageEffects.DepthOfField
+    read   EffectsController.SetDoFFocalDistance
+    <- called by CameraManager.ApplyFoV, on every FOV change
+```
+
+I found the PPv2 one first, saw a real `DepthOfField` on a real
+`PostProcessVolume`, and stopped looking. It is only used by `SetZBlur`. The one
+you actually see in a raid is the **legacy** image effect, and the game drives it
+continuously:
+
+```
+focalLength = 5.2 - InverseLerp(minFov, maxFov, fov) * (minFov / (maxFov - minFov))
+```
+
+So Tarkov already focuses about five metres out and pulls that in as you zoom.
+That is the softness the owner remembered.
+
+### The screenshot settled the technique
+
+He sent a frame of the effect he wanted: the receiver nearest the eye heavily
+soft, the front sight half a metre further out nearly sharp, the world beyond in
+focus. **The blur is a gradient down the weapon.**
+
+That one observation rules out every approach in F26 through F34. Swapping a
+material, blurring "the weapon", fading a renderer - all of them apply one flat
+amount to a whole object. Only a depth-based effect blurs each pixel by how far
+it sits from the plane of focus, and the gradient falls out of the geometry for
+free.
+
+It also explains why the transparency work was a dead end even when it worked:
+transparency is not softness, and the reference was never asking for it.
+
+### nearBlur is the whole feature
+
+The legacy effect has a field the PPv2 one does not:
+
+```
+nearBlur : bool     - blur things NEARER than the focus plane
+```
+
+The gun is nearer than anything you are ever looking at. With `nearBlur` off,
+focus can sit at infinity and the weapon stays perfectly sharp. It is the
+difference between the feature working and the feature doing nothing, and it is
+one boolean.
+
+### focalTransform silently outranks focalLength
+
+From the Standard Assets source:
+
+```csharp
+float focalDistance01 = focalTransform
+    ? WorldToViewportPoint(focalTransform.position).z / farClipPlane
+    : FocalDistance01(focalLength);
+```
+
+If `focalTransform` is set, `focalLength` is **ignored entirely**, and
+`EffectsController.Init` copies one across from the prefab. Writing a focus
+distance without clearing it would have been a perfect silent no-op - the write
+succeeds, the value lands in the field, and the effect never reads it.
+
+That is F34's lesson for the third time: **an API call that succeeds is not an API
+call that did something.** `DriveDepthOfField` nulls `focalTransform` first and
+restores it on release.
+
+### maxBlurSize as the strength dial
+
+The legacy effect also has `aperture`, but its direction is not obvious from the
+outside and I could not verify it without the shader. `maxBlurSize` is a blur
+**radius**: 0 is unambiguously nothing, larger is unambiguously more. So that is
+the dial the config exposes and the one the aim blend ramps, and `aperture` is
+left at stock rather than asserting a direction I cannot check.
+
+### Transparency, rewritten rather than repaired
+
+The owner also asked why the transparent option turned the sight black. Because
+the swap copied `_MainTex`, and EFT's weapon shaders do not keep albedo there -
+so the replacement shader got no texture and drew flat. Nothing threw: asking a
+material for a texture it does not have is a legal question with a null answer.
+
+The rewrite does not guess. `Shader.GetPropertyCount` / `GetPropertyType` /
+`GetPropertyName` are available in this Unity version, so it reads the source
+shader's own property table, keeps the texture properties, scores them by name
+(albedo and base-colour high, normal and roughness negative), and takes the best.
+**If it finds nothing it leaves the material alone** rather than blacking it out,
+and the diagnostic prints the whole table so the next round is informed.
+
+Restore is by the whole `sharedMaterials` array per renderer, which is what the
+first version got wrong when it failed to come back on un-aim.
+
+### The lesson worth keeping
+
+Finding *a* thing that matches the description is not finding *the* thing that
+runs. Both DepthOfFields were real, both were reachable, both were on the camera.
+The probe that mattered was not "does a DOF exist" but "who calls it" - and that
+is four lines of Cecil I could have written at F26.

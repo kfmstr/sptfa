@@ -1,3 +1,4 @@
+using System;
 using BepInEx;
 using BepInEx.Logging;
 using HarmonyLib;
@@ -26,6 +27,15 @@ namespace SPTFreeAim
         public const string NAME = "SPT Free Aim";
         public const string VERSION = "0.1.0";
 
+        /// <summary>
+        /// Stamped at compile time so the log can answer "is the game even
+        /// running the build I just made". F31 cost a round trip to a stale
+        /// DLL that no line of output distinguished from a fresh one.
+        /// </summary>
+        public static readonly string BuildStamp =
+            System.IO.File.GetLastWriteTime(
+                typeof(Plugin).Assembly.Location).ToString("yyyy-MM-dd HH:mm:ss");
+
         public static Plugin Instance { get; private set; }
         public static ManualLogSource Log { get; private set; }
 
@@ -35,6 +45,7 @@ namespace SPTFreeAim
             get
             {
                 return Instance != null
+                    && Instance._started
                     && !Instance._emergencyDisabled
                     && Instance.Cfg.Enabled.Value
                     && Instance.Cfg.Mode.Value != DriveMode.Disabled
@@ -47,6 +58,9 @@ namespace SPTFreeAim
         public StanceState Stance { get; private set; }
 
         private bool _emergencyDisabled;
+
+        /// <summary>True only once AwakeCore has run to completion. See F32.</summary>
+        private bool _started;
         private Harmony _harmony;
         private DebugHud _hud;
 
@@ -55,8 +69,25 @@ namespace SPTFreeAim
             Instance = this;
             Log = Logger;
 
+            // Every line of Awake used to run before the first log call, so a
+            // throw in any of it produced exactly one line in the log - BepInEx's
+            // own "Loading [SPT Free Aim]" - and then silence. That is what
+            // happened, and it cost a round trip to diagnose something the mod
+            // could have said itself. F30.
+            Log.LogInfo("Awake: starting. " + VERSION + "  build " + BuildStamp);
+            try { AwakeCore(); }
+            catch (Exception e)
+            {
+                Log.LogError("SPT Free Aim FAILED TO START. Nothing below this line ran:\n" + e);
+            }
+        }
+
+        private void AwakeCore()
+        {
+            Log.LogInfo("Awake: binding config");
             Cfg = new FreeAimConfig();
             Cfg.Bind(Config);
+            Log.LogInfo("Awake: config bound, resolving game members");
 
             State = new FreeAimState();
             Stance = new StanceState();
@@ -86,15 +117,35 @@ namespace SPTFreeAim
 
             Log.LogInfo(NAME + " " + VERSION + " loaded. Mode: " + Cfg.Mode.Value +
                         ". F12 to configure, F8 master toggle, F9 HUD, F10 write probe.");
+
+            _started = true;
         }
 
         private void Update()
         {
-            if (Instance == null || Cfg == null) return;
+            // A NULL CHECK ON Cfg IS NOT ENOUGH, and that is the whole of F32.
+            // Cfg is assigned before Cfg.Bind(Config) runs, so a throw inside
+            // Bind leaves a non-null FreeAimConfig whose every ConfigEntry field
+            // is still null - and the next line, Cfg.ToggleKey.Value, throws once
+            // per frame forever.
+            //
+            // The flag is set on the last line of AwakeCore, so it means "all of
+            // it ran", which is the only thing worth testing.
+            if (!_started) return;
 
             if (Cfg.ToggleKey.Value.IsDown())
             {
                 Cfg.Enabled.Value = !Cfg.Enabled.Value;
+
+                // Turning it back on clears an emergency disable. Without this the
+                // flag is permanent for the session, the toggle looks dead, and
+                // the only way back is leaving the raid - which is exactly what
+                // the owner hit. Fixed once in F19 and lost again in the rollback.
+                if (Cfg.Enabled.Value && _emergencyDisabled)
+                {
+                    _emergencyDisabled = false;
+                    Log.LogInfo("Clearing the emergency disable and retrying.");
+                }
                 Log.LogInfo("Free aim " + (Cfg.Enabled.Value ? "ON" : "OFF"));
                 if (!Cfg.Enabled.Value) ResetState();
             }
@@ -148,6 +199,8 @@ namespace SPTFreeAim
 
         private void OnGUI()
         {
+            if (!_started) return;
+
             if (Cfg != null && Cfg.ShowHud.Value) _hud.Draw(this);
         }
 
@@ -170,7 +223,7 @@ namespace SPTFreeAim
         public void EmergencyDisable()
         {
             _emergencyDisabled = true;
-            Log.LogError("SPT Free Aim disabled for this session. Re-enable by restarting the raid.");
+            Log.LogError("SPT Free Aim disabled for this session. Press the master toggle (F8) twice to clear it and retry - no need to restart the raid.");
         }
 
         private void OnDestroy()

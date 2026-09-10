@@ -1,167 +1,124 @@
 using System;
 using UnityEngine;
-using UnityEngine.Rendering.PostProcessing;
 
 namespace SPTFreeAim.Patches
 {
     /// <summary>
-    /// Focus on the target, and let the gun go soft.
+    /// The gun goes soft while your eye is focused downrange.
     ///
-    /// A real camera depth of field, not an approximation. I told the owner this
-    /// was unreachable because I had only looked inside Assembly-CSharp; the
-    /// game ships Unity's Post Processing Stack v2 as its own assembly, and its
-    /// DepthOfField effect takes exactly the three numbers a real lens does
-    /// (docs/07-FINDINGS.md F28).
+    /// The owner's hunch was right, and so was his reference frame: in the
+    /// Bodycam-style footage the blur is a GRADIENT down the weapon. The
+    /// receiver, nearest the eye, is heavily soft; the front sight, a good half
+    /// metre further out, is nearly sharp; the world beyond is in focus.
     ///
-    /// The focus distance is not a setting. It is a raycast down the middle of
-    /// the screen, so the plane of focus lands on whatever you are actually
-    /// looking at - which is the whole point. Look at a wall two metres away and
-    /// the gun sharpens up; look down a street and it melts.
+    /// That gradient is the whole tell, and it rules out every per-renderer
+    /// trick - swapping a material, or blurring "the weapon", gives one flat
+    /// amount over the whole object. Only a depth-based effect blurs by how far
+    /// each pixel sits from the plane of focus.
     ///
-    /// This is the one feature here that costs frames. A DOF pass is real work
-    /// for the GPU, which is why it is OFF by default and why the thread the
-    /// owner linked spent half its comments arguing about exactly that.
+    /// The game already owns one. Not the PostProcessing v2 DepthOfField hanging
+    /// off CameraManager - that one is only read by SetZBlur - but the legacy
+    /// UnityStandardAssets image effect at EffectsController._dof, which
+    /// CameraManager.ApplyFoV drives on every FOV change. It has `nearBlur`,
+    /// which is the field this needs: blur things NEARER than focus. See F36 and
+    /// Compat/GameRefs.cs.
+    ///
+    /// Focus follows the VIEW ray, not the bore. Free aim means the gun is
+    /// usually pointing somewhere the eye is not, and the eye is what focuses.
     /// </summary>
     public static class FocusDepth
     {
-        private static GameObject _host;
-        private static PostProcessVolume _volume;
-        private static PostProcessProfile _profile;
-        private static DepthOfField _dof;
-        private static bool _failed;
-
-        public static string Status = "not started";
-        public static float LastFocus;
-
         public struct Options
         {
             public bool Enabled;
-            public float Aperture;      // lower = shallower depth of field = more blur
-            public float FocalLength;   // mm
-            public float MaxDistance;   // where to focus when the ray hits nothing
+            public float BlurSize;      // maxBlurSize - the strength dial, 0 = nothing
+            public float Band;          // focalSize - depth of the sharp zone
+            public float MaxDistance;   // focus here when the ray hits nothing
             public bool OnlyWhileAiming;
-            public float Strength;      // 0..1, blended by the aim blend
+            public float Strength;      // scales BlurSize
         }
+
+        /// <summary>
+        /// The ray starts this far in front of the eye so it cannot hit the
+        /// player's own weapon or arms. The distance is added back afterwards, so
+        /// the focus plane still lands on the real surface. Nothing worth
+        /// focusing on is closer than a metre.
+        /// </summary>
+        private const float NearSkip = 1.0f;
+
+        public static string Status = "not started";
+        public static float LastFocus;
+        public static float LastBlur;
+        public static bool Driving;
 
         public static void Frame(Camera cam, float aimBlend, Options o)
         {
-            if (!o.Enabled || _failed)
+            if (!o.Enabled)
             {
-                if (_volume != null) _volume.weight = 0f;
+                if (Driving) Stop();
                 return;
             }
 
-            if (_host == null && !Build(cam)) return;
+            if (cam == null) { Status = "no camera yet"; return; }
 
-            float w = o.OnlyWhileAiming ? aimBlend * o.Strength : o.Strength;
-            _volume.weight = Mathf.Clamp01(w);
-            if (_volume.weight <= 0.001f) return;
+            if (!Compat.GameRefs.HaveGameDof)
+            {
+                if (!Compat.GameRefs.ResolveGameDof())
+                {
+                    // Not fatal and not necessarily permanent - none of this
+                    // exists outside a raid, so keep trying rather than latching
+                    // a failure the way the first version did.
+                    Status = Compat.GameRefs.DofWhyNot;
+                    return;
+                }
+                Status = "driving the game's own DepthOfField";
+            }
 
-            _dof.aperture.value = o.Aperture;
-            _dof.focalLength.value = o.FocalLength;
-            _dof.focusDistance.value = FocusDistance(cam, o.MaxDistance);
-            LastFocus = _dof.focusDistance.value;
+            float w = o.OnlyWhileAiming ? aimBlend : 1f;
+            w = Mathf.Clamp01(w * o.Strength);
+
+            if (w <= 0.001f)
+            {
+                if (Driving) Stop();
+                return;
+            }
+
+            LastFocus = FocusDistance(cam, o.MaxDistance);
+
+            // maxBlurSize is the strength dial, and it is the honest one: it is a
+            // blur RADIUS, so 0 is unambiguously "no blur" and larger is
+            // unambiguously "more". Ramping it with the aim blend means the
+            // weapon eases out of focus as it comes up rather than snapping.
+            LastBlur = o.BlurSize * w;
+
+            Driving = true;
+            Compat.GameRefs.DriveDepthOfField(LastFocus, o.Band, LastBlur);
         }
 
-        /// <summary>
-        /// Where the eye is focused: straight down the middle of the view, to
-        /// whatever is there. Nothing hit means focus at the far limit, which is
-        /// what looking at open sky does.
-        ///
-        /// Deliberately not the gun's bearing. Free aim means the gun is often
-        /// pointing somewhere the eye is not, and the eye is what focuses.
-        /// </summary>
+        private static void Stop()
+        {
+            Driving = false;
+            LastBlur = 0f;
+            Compat.GameRefs.ReleaseDepthOfField();
+        }
+
         private static float FocusDistance(Camera cam, float max)
         {
+            Transform t = cam.transform;
+            Vector3 origin = t.position + t.forward * NearSkip;
+            float reach = Mathf.Max(max - NearSkip, 1f);
+
             RaycastHit hit;
-            if (Physics.Raycast(cam.transform.position, cam.transform.forward, out hit, max))
-                return Mathf.Max(hit.distance, 0.3f);
-            return max;
+            if (Physics.Raycast(origin, t.forward, out hit, reach,
+                                Physics.DefaultRaycastLayers, QueryTriggerInteraction.Ignore))
+                return hit.distance + NearSkip;
+
+            return max;   // nothing out there: focus at infinity, gun at its softest
         }
 
-        private static bool Build(Camera cam)
-        {
-            try
-            {
-                if (cam == null) { Status = "no camera yet"; return false; }
-
-                // The volume has to sit on a layer the game's own PostProcessLayer
-                // is watching, or it is simply ignored. Read the mask rather than
-                // guessing a layer number.
-                PostProcessLayer layer = cam.GetComponent<PostProcessLayer>()
-                                         ?? UnityEngine.Object.FindObjectOfType<PostProcessLayer>();
-                if (layer == null)
-                {
-                    _failed = true;
-                    Status = "no PostProcessLayer on the camera - DOF unavailable";
-                    Plugin.Log.LogWarning("Depth of field: " + Status);
-                    return false;
-                }
-
-                int mask = layer.volumeLayer.value;
-                int useLayer = -1;
-                for (int i = 0; i < 32; i++)
-                    if ((mask & (1 << i)) != 0) { useLayer = i; break; }
-
-                if (useLayer < 0)
-                {
-                    _failed = true;
-                    Status = "PostProcessLayer watches no layers - DOF unavailable";
-                    Plugin.Log.LogWarning("Depth of field: " + Status);
-                    return false;
-                }
-
-                _profile = ScriptableObject.CreateInstance<PostProcessProfile>();
-                _profile.hideFlags = HideFlags.HideAndDontSave;
-
-                _dof = _profile.AddSettings<DepthOfField>();
-                _dof.enabled.Override(true);
-                _dof.focusDistance.Override(10f);
-                _dof.aperture.Override(2.8f);
-                _dof.focalLength.Override(50f);
-                _dof.kernelSize.Override(KernelSize.Medium);
-
-                _host = new GameObject("sptfa_focus");
-                _host.layer = useLayer;
-                _host.hideFlags = HideFlags.HideAndDontSave;
-                UnityEngine.Object.DontDestroyOnLoad(_host);
-
-                _volume = _host.AddComponent<PostProcessVolume>();
-                _volume.isGlobal = true;
-                _volume.sharedProfile = _profile;
-                _volume.weight = 0f;
-
-                // Above the game's own volumes so ours is what decides the focus
-                // while it is weighted in, and irrelevant when its weight is zero.
-                _volume.priority = 1000f;
-
-                Status = "active on layer " + LayerMask.LayerToName(useLayer) + " (" + useLayer + ")";
-                Plugin.Log.LogInfo("Depth of field: " + Status);
-                return true;
-            }
-            catch (Exception e)
-            {
-                _failed = true;
-                Status = "failed: " + e.Message;
-                Plugin.Log.LogError("Depth of field could not be built, switching it off: " + e);
-                return false;
-            }
-        }
-
-        /// <summary>
-        /// Tear the volume down. It is marked DontDestroyOnLoad, so without this
-        /// it would outlive the raid and keep blurring the menu.
-        /// </summary>
         public static void Release()
         {
-            try
-            {
-                if (_volume != null) _volume.weight = 0f;
-                if (_host != null) UnityEngine.Object.Destroy(_host);
-                if (_profile != null) UnityEngine.Object.Destroy(_profile);
-            }
-            catch { }
-            _host = null; _volume = null; _profile = null; _dof = null;
+            Stop();
             Status = "released";
         }
     }

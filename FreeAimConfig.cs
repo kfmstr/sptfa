@@ -73,17 +73,14 @@ namespace SPTFreeAim
         public ConfigEntry<bool> ArmDrainEnabled;
         public ConfigEntry<float> ArmDrainRate;
         public ConfigEntry<float> ArmDrainAimedMultiplier;
-        public ConfigEntry<bool> HousingTransparent;
-        public ConfigEntry<float> HousingAlpha;
-        public ConfigEntry<bool> HousingDoubled;
-        public ConfigEntry<float> HousingSeparation;
-        public ConfigEntry<bool> HousingHide;
         public ConfigEntry<bool> DofEnabled;
-        public ConfigEntry<float> DofAperture;
-        public ConfigEntry<float> DofFocalLength;
+        public ConfigEntry<float> DofBlurSize;
+        public ConfigEntry<float> DofBand;
         public ConfigEntry<float> DofMaxDistance;
         public ConfigEntry<bool> DofOnlyAiming;
         public ConfigEntry<float> DofStrength;
+        public ConfigEntry<float> SightAlpha;
+        public ConfigEntry<bool> LogSightMaterials;
         public ConfigEntry<bool> DumpLensMaterial;
         public ConfigEntry<bool> KeepPeripheralVision;
         public ConfigEntry<float> PeripheralStrength;
@@ -347,84 +344,72 @@ namespace SPTFreeAim
                 "makes the ready position worth returning to. 1.0 removes the distinction.",
                 new AcceptableValueRange<float>(0.25f, 4f)));
 
-            HousingTransparent = cfg.Bind(S_BODY, "Optic housing: transparent", true,
-                "Your off eye sees past the body of the optic, so it reads as a ghost rather than a " +
-                "wall. Alpha on the housing materials.\n" +
+            DofEnabled = cfg.Bind(S_BODY, "Gun blur: focus past the gun", true,
+                "The gun goes soft while your eyes are downrange - the focused-at-infinity look.\n" +
                 "\n" +
-                "Combines with the doubling below - use either, both, or neither. The lens and the " +
-                "reticle are never touched by any of it.");
+                "This drives the game's OWN depth of field, the legacy image effect that Tarkov " +
+                "already runs and already re-focuses every time your field of view changes. It is " +
+                "depth-based, which is what makes it look right: the blur is a gradient down the " +
+                "weapon, heaviest at the receiver nearest your eye and easing off toward the front " +
+                "sight half a metre further out. No per-object trick can do that - it would blur " +
+                "the whole gun by one flat amount.\n" +
+                "\n" +
+                "The focus distance is not a setting: it is a raycast down the middle of the " +
+                "screen, so look at a wall two metres off and the gun sharpens up, look down a " +
+                "street and it melts. Deliberately the VIEW's direction, not the gun's - free aim " +
+                "means the gun is often pointing somewhere your eye is not, and the eye focuses.\n" +
+                "\n" +
+                "Every value it touches is captured first and handed back when it stops, so it " +
+                "cannot follow you out of the raid.");
 
-            HousingAlpha = cfg.Bind(S_BODY, "Housing solidity", 0.3f, new ConfigDescription(
-                "How much of the housing is left. 0 is invisible, 1 is stock solid. 0.3 leaves " +
-                "enough to see where the sight is without it blocking the room behind it.",
+            DofBlurSize = cfg.Bind(S_BODY, "Gun blur amount", 2.5f, new ConfigDescription(
+                "How soft the gun gets, as a blur radius. This is the strength dial and it is the " +
+                "unambiguous one: 0 is no blur at all, larger is blurrier. Around 2 to 3 matches " +
+                "the reference footage; past 5 it turns to soup.",
+                new AcceptableValueRange<float>(0f, 8f)));
+
+            DofBand = cfg.Bind(S_BODY, "Gun blur: sharp zone", 0.05f, new ConfigDescription(
+                "How deep the in-focus zone is around whatever you are looking at. Smaller is a " +
+                "tighter plane of focus, so the gun falls out of it sooner. Raise it if the world " +
+                "itself starts looking soft.",
                 new AcceptableValueRange<float>(0f, 1f)));
 
-            HousingDoubled = cfg.Bind(S_BODY, "Optic housing: doubled", true,
-                "The near-object blur, done the way your eyes actually do it.\n" +
-                "\n" +
-                "Two eyes see something this close from noticeably different angles, and the brain " +
-                "does not fuse it because it is focused past it on the target. So the housing " +
-                "appears TWICE, offset by the eye separation, each copy faint. That doubling is " +
-                "what near-object blur looks like to a shooter - it is the actual phenomenon rather " +
-                "than an approximation of it.\n" +
-                "\n" +
-                "A true camera depth-of-field would be the other way to do this. EFT's Prism post " +
-                "stack is not reachable from Assembly-CSharp, and it would blur the whole near " +
-                "field rather than the optic, so this is both the cheaper and the more targeted " +
-                "answer.");
-
-            HousingSeparation = cfg.Bind(S_BODY, "Eye separation (m)", 0.064f, new ConfigDescription(
-                "How far apart the two copies sit. 0.064 m is the average human interpupillary " +
-                "distance, which is the physically right answer - but the housing is much closer " +
-                "to your eye than a real optic is, so raise it if the doubling is too subtle to " +
-                "read, or lower it if it looks like two guns.",
-                new AcceptableValueRange<float>(0f, 0.2f)));
-
-            HousingHide = cfg.Bind(S_BODY, "Optic housing: hide instead", false,
-                "Blunt version: take the housing out entirely while aiming. Overrides the two " +
-                "above.\n" +
-                "\n" +
-                "Worth knowing about because it works on EVERY shader. The other two need a colour " +
-                "property to write and some of EFT's custom weapon shaders have none - when that " +
-                "happens the log says so and it falls back to this anyway.");
-
-            DofEnabled = cfg.Bind(S_BODY, "Depth of field: focus past the gun", false,
-                "A REAL camera depth of field, focused on whatever you are looking at, so the gun " +
-                "goes soft the way it does when your eyes are downrange.\n" +
-                "\n" +
-                "The focus distance is not a setting - it is a raycast down the middle of the " +
-                "screen. Look at a wall two metres away and the gun sharpens up; look down a " +
-                "street and it melts. Deliberately the VIEW's direction, not the gun's: free aim " +
-                "means the gun is often pointing somewhere your eye is not, and the eye is what " +
-                "focuses.\n" +
-                "\n" +
-                "OFF BY DEFAULT because this one genuinely costs frames. A DOF pass is real work " +
-                "for the GPU. The doubling above is nearly free by comparison and gets at the same " +
-                "idea - try that first, and reach for this if you want the full effect.");
-
-            DofAperture = cfg.Bind(S_BODY, "DOF aperture (f-stop)", 2.8f, new ConfigDescription(
-                "Lower is a shallower depth of field, so more blur on everything off the focus " +
-                "plane. f/2.8 is a fast lens and reads as strongly cinematic; f/8 is subtle.",
-                new AcceptableValueRange<float>(0.5f, 32f)));
-
-            DofFocalLength = cfg.Bind(S_BODY, "DOF focal length (mm)", 50f, new ConfigDescription(
-                "Longer throws more of the frame out of focus. 50 mm is roughly what the human " +
-                "eye does; going much above that starts to look like a telephoto rather than a " +
-                "pair of eyes.",
-                new AcceptableValueRange<float>(10f, 300f)));
-
-            DofMaxDistance = cfg.Bind(S_BODY, "DOF max focus distance (m)", 120f, new ConfigDescription(
-                "Where to focus when the ray hits nothing - open sky, or past the far limit.",
+            DofMaxDistance = cfg.Bind(S_BODY, "Gun blur: max focus distance (m)", 120f, new ConfigDescription(
+                "Where to focus when the ray hits nothing - open sky. This is your infinity, and " +
+                "where the gun is at its softest.",
                 new AcceptableValueRange<float>(10f, 500f)));
 
-            DofOnlyAiming = cfg.Bind(S_BODY, "DOF only while aiming", true,
+            DofOnlyAiming = cfg.Bind(S_BODY, "Gun blur only while aiming", true,
                 "On, it fades in as you shoulder the weapon. Off, it is always there, which is " +
-                "more truthful about how eyes work and much more noticeable while moving.");
+                "more truthful about eyes and much more noticeable while moving.");
 
-            DofStrength = cfg.Bind(S_BODY, "DOF strength", 1f, new ConfigDescription(
-                "Weight of the effect. Back it off rather than raising the f-stop if you want it " +
-                "present but quieter.",
+            DofStrength = cfg.Bind(S_BODY, "Gun blur strength", 1f, new ConfigDescription(
+                "Scales the blur amount above. Back this off for something present but quieter, " +
+                "without losing the shape of the falloff.",
                 new AcceptableValueRange<float>(0f, 1f)));
+
+            SightAlpha = cfg.Bind(S_BODY, "Sight transparency", 0f, new ConfigDescription(
+                "Fades the optic's BODY out while you aim, so the sight stops being a brick in " +
+                "front of the eye that is not looking through it. The lens and reticle are left " +
+                "alone - they are the part you look through.\n" +
+                "\n" +
+                "0 is off. Try 0.5 first. This is a rewrite of the version that turned the sight " +
+                "black: that one assumed the albedo lived in _MainTex, EFT's shaders do not keep " +
+                "it there, and an untextured blend shader draws flat black. This one asks the " +
+                "shader where its textures actually are, and if it cannot find one it leaves the " +
+                "material alone rather than blacking it out.\n" +
+                "\n" +
+                "Whether a build has any shader that blends is not guaranteed. If it does not, you " +
+                "get one line in the log and nothing changes. Turn on the log below to see what " +
+                "was found.",
+                new AcceptableValueRange<float>(0f, 0.95f)));
+
+            LogSightMaterials = cfg.Bind(S_BODY, "Log the sight materials", false,
+                "DIAGNOSTIC. Writes every material on the current sight's body, its shader name, " +
+                "and every texture property that shader declares, once per raid.\n" +
+                "\n" +
+                "This is what makes transparency fixable rather than guessable - it says out loud " +
+                "where EFT keeps its albedo instead of assuming.");
 
             DumpLensMaterial = cfg.Bind(S_BODY, "Log the optic lens material", false,
                 "DIAGNOSTIC, for the scope glare question. Writes the shader name and every " +
@@ -434,7 +419,15 @@ namespace SPTFreeAim
                 "lens-glare effect can be switched back on depends on what that shader still " +
                 "carries. Turn this on, aim down a scope, and send me the log lines.");
 
-            KeepPeripheralVision = cfg.Bind(S_BODY, "Keep peripheral vision when aiming", false,
+            KeepPeripheralVision = cfg.Bind(S_BODY, "Keep peripheral vision when aiming - does not work", false,
+                "DOES NOT WORK on this build and the switch is left only so the reason is " +
+                "visible rather than mysterious. CameraManager.AimDeltaFov turned out to be a " +
+                "CONST float of 15 - writing it throws, and the game has 15 compiled into every " +
+                "place it uses it, so even a successful write would do nothing. The HUD says so " +
+                "too. Doing this properly means going through CameraManager.Fov instead; ask and " +
+                "I will. See docs/07-FINDINGS.md F29.\n" +
+                "\n" +
+                "ORIGINAL DESCRIPTION FOLLOWS.\n" +
                 "Keep your peripheral vision when the weapon comes into the shoulder.\n" +
                 "\n" +
                 "Tarkov narrows the field of view as you aim, which reads as closing one eye and " +

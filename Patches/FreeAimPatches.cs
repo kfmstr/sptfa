@@ -61,7 +61,6 @@ namespace SPTFreeAim.Patches
         /// <summary>Called when the local player changes, so no stale base survives a raid.</summary>
         public static void ForgetGuards()
         {
-            OpticHousing.Restore();
             GuardWeapon.Forget();
             GuardCamera.Forget();
             GuardPose.Forget();
@@ -71,8 +70,8 @@ namespace SPTFreeAim.Patches
         public static void Remove()
         {
             GameRefs.ReleaseAimFov();
-            OpticHousing.Restore();
             FocusDepth.Release();
+            OpticHousing.Release();
             LocalPlayer = null;
             LocalPwa = null;
             if (_harmony != null) _harmony.UnpatchSelf();
@@ -146,22 +145,31 @@ namespace SPTFreeAim.Patches
                 cfg.ArmDrainEnabled.Value = false;
             }
 
-            try { ApplyOpticHousing(pwa, p, cfg); }
-            catch (Exception e)
+            try
             {
-                Plugin.Log.LogError("Optic housing failed, switching it off: " + e);
-                cfg.HousingTransparent.Value = false;
-                cfg.HousingDoubled.Value = false;
-                cfg.HousingHide.Value = false;
-                OpticHousing.Restore();
+                FocusDepth.Frame(Camera.main, p.State.AimBlend, new FocusDepth.Options
+                {
+                    Enabled = cfg.DofEnabled.Value,
+                    BlurSize = cfg.DofBlurSize.Value,
+                    Band = cfg.DofBand.Value,
+                    MaxDistance = cfg.DofMaxDistance.Value,
+                    OnlyWhileAiming = cfg.DofOnlyAiming.Value,
+                    Strength = cfg.DofStrength.Value
+                });
             }
-
-            try { ApplyFocusDepth(pwa, p, cfg); }
             catch (Exception e)
             {
                 Plugin.Log.LogError("Depth of field failed, switching it off: " + e);
                 cfg.DofEnabled.Value = false;
                 FocusDepth.Release();
+            }
+
+            try { ApplySightTransparency(p, pwa, cfg); }
+            catch (Exception e)
+            {
+                Plugin.Log.LogError("Sight transparency failed, switching it off: " + e);
+                cfg.SightAlpha.Value = 0f;
+                OpticHousing.Release();
             }
 
             try { ApplyBothEyes(p, cfg); }
@@ -432,42 +440,24 @@ namespace SPTFreeAim.Patches
         /// CameraManager, so leaving it modified would follow the player out of
         /// the raid and into the next one.
         /// </summary>
+
+
         /// <summary>
-        /// See through the body of the optic while aiming (F26). All the game
-        /// lookups happen here so the renderer bookkeeping in OpticHousing stays
-        /// free of reflection, per the hard rule in CLAUDE.md.
+        /// Fade the optic's body while aiming. Cheap when off: the sight bone
+        /// lookup only happens once the option is actually turned up.
         /// </summary>
-        private static void ApplyOpticHousing(ProceduralWeaponAnimation pwa, Plugin p, FreeAimConfig cfg)
+        private static void ApplySightTransparency(Plugin p, object pwa, FreeAimConfig cfg)
         {
-            OpticHousing.Options o = new OpticHousing.Options
+            if (cfg.SightAlpha.Value <= 0.001f) { OpticHousing.RestoreAll(); return; }
+
+            Transform bone = GameRefs.GetCurrentSightBone(pwa);
+            Transform housing = bone == null ? null : GameRefs.GetOpticHousingRoot(bone);
+
+            OpticHousing.Frame(housing, p.State.AimBlend, new OpticHousing.Options
             {
-                Transparent = cfg.HousingTransparent.Value,
-                Alpha = cfg.HousingAlpha.Value,
-                Doubled = cfg.HousingDoubled.Value,
-                Separation = cfg.HousingSeparation.Value,
-                Hide = cfg.HousingHide.Value
-            };
-
-            Transform bone = (o.Transparent || o.Doubled || o.Hide)
-                ? GameRefs.GetCurrentSightBone(pwa)
-                : null;
-
-            OpticHousing.Frame(bone, GameRefs.GetLensRenderer(bone), p.State.AimBlend, o);
-        }
-
-        private static void ApplyFocusDepth(ProceduralWeaponAnimation pwa, Plugin p, FreeAimConfig cfg)
-        {
-            if (cfg.DumpLensMaterial.Value)
-                GameRefs.DumpLensMaterialOnce(GameRefs.GetCurrentSightBone(pwa));
-
-            FocusDepth.Frame(Camera.main, p.State.AimBlend, new FocusDepth.Options
-            {
-                Enabled = cfg.DofEnabled.Value,
-                Aperture = cfg.DofAperture.Value,
-                FocalLength = cfg.DofFocalLength.Value,
-                MaxDistance = cfg.DofMaxDistance.Value,
-                OnlyWhileAiming = cfg.DofOnlyAiming.Value,
-                Strength = cfg.DofStrength.Value
+                Enabled = true,
+                Alpha = cfg.SightAlpha.Value,
+                LogMaterials = cfg.LogSightMaterials.Value
             });
         }
 

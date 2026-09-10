@@ -72,18 +72,20 @@ namespace SPTFreeAim.Debugging
                                         cfg.ArmDrainAimedMultiplier.Value)
                                   : "<color=#ffcc55>off</color>")
                         : "<color=#ffcc55>hands pool not reached yet</color>") +
-                Row("focus (DOF)", cfg.DofEnabled.Value
-                        ? string.Format("<color=#7fd1b9>{0:F1} m</color>  f/{1:F1}  {2}mm   {3}",
-                              FocusDepth.LastFocus, cfg.DofAperture.Value,
-                              cfg.DofFocalLength.Value.ToString("F0"), FocusDepth.Status)
-                        : "off (costs frames - try 'doubled' first)") +
-                Row("optic housing", HousingModes(cfg) + "  " + OpticHousing.LastReport) +
+                Row("gun blur", cfg.DofEnabled.Value
+                        ? string.Format("focus <color=#7fd1b9>{0:F1} m</color>  blur {1:F2}  band {2:F2}   {3}",
+                              FocusDepth.LastFocus, FocusDepth.LastBlur,
+                              cfg.DofBand.Value, FocusDepth.Status)
+                        : "off") +
+                Row("sight alpha", cfg.SightAlpha.Value > 0.001f
+                        ? OpticHousing.Status
+                        : "off") +
                 Row("peripheral", GameRefs.AimFovAvailable
                         ? (cfg.KeepPeripheralVision.Value
                               ? string.Format("<color=#7fd1b9>open</color>  narrowing x{0:F2}  (stock delta {1:F1})",
                                     1f - cfg.PeripheralStrength.Value * st.AimBlend, GameRefs.StockAimDeltaFov)
                               : "stock Tarkov")
-                        : "<color=#ffcc55>CameraManager.AimDeltaFov not found</color>") +
+                        : "<color=#ffcc55>" + GameRefs.AimFovWhyNot + "</color>") +
                 Row("parentage", FreeAimPatches.ParentageReport) +
                 Row("cone / cap", string.Format("{0:F1} / {1:F1} deg", cfg.ConeDegrees.Value, cfg.CapDegrees.Value)) +
                 Row("k / push", string.Format("{0:F1} / {1:F2}", cfg.SpringK.Value, cfg.PushFactor.Value)) +
@@ -99,15 +101,6 @@ namespace SPTFreeAim.Debugging
             GUI.Label(new Rect(20, 18, 470, 302), "<b>SPT Free Aim</b>\n\n" + body, _style);
         }
 
-        private static string HousingModes(FreeAimConfig cfg)
-        {
-            if (cfg.HousingHide.Value) return "<color=#7fd1b9>HIDE</color>";
-            string s = "";
-            if (cfg.HousingTransparent.Value) s += "<color=#7fd1b9>transparent</color> ";
-            if (cfg.HousingDoubled.Value) s += "<color=#7fd1b9>doubled</color> ";
-            if (s.Length == 0) return "stock Tarkov";
-            return s + (OpticHousing.AlphaWorks ? "" : "<color=#ffcc55>(no alpha here)</color>");
-        }
 
         private static string Row(string label, string value)
         {
