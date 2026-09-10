@@ -18,6 +18,7 @@ namespace SPTFreeAim
         private const string S_STANCE = "4. Stance";
         private const string S_RECOIL = "5. Recoil";
         private const string S_BODY = "6. Body";
+        private const string S_OPTIC = "7. Optic glass";
         private const string S_DEBUG = "9. Debug";
 
         // ---- Main --------------------------------------------------------
@@ -99,6 +100,25 @@ namespace SPTFreeAim
         public ConfigEntry<bool> InvertGunRoll;
         public ConfigEntry<bool> GunRollAboutView;
         public ConfigEntry<float> ShoulderGive;
+        public ConfigEntry<float> OpticBloom;
+        public ConfigEntry<float> OpticFringe;
+        public ConfigEntry<float> OpticVignette;
+        public ConfigEntry<float> OpticDistortion;
+
+        /// <summary>
+        /// Any glass effect asked for at all. Same shape as the others: a value
+        /// that means nothing IS the off switch, no separate bool. F44.
+        /// </summary>
+        public bool OpticGlassActive
+        {
+            get
+            {
+                return OpticBloom.Value > 0.001f
+                    || OpticFringe.Value > 0.001f
+                    || OpticVignette.Value > 0.001f
+                    || Mathf.Abs(OpticDistortion.Value) > 0.001f;
+            }
+        }
 
         // No master switches for these two. A master bool sitting above a row of
         // dials looks optional, and the dials look like the feature - so the dials
@@ -672,6 +692,40 @@ namespace SPTFreeAim
                 "\n" +
                 "This is what makes transparency fixable rather than guessable - it says out loud " +
                 "where EFT keeps its albedo instead of assuming.");
+
+            OpticBloom = cfg.Bind(S_OPTIC, "Optic: bloom", 0f, new ConfigDescription(
+                "Light blooming INSIDE the scope image only - the bright hotspot on the glass, " +
+                "without hazing over the rest of the screen.\n" +
+                "\n" +
+                "The scope is a view inside a view: Tarkov renders it with its own camera and its " +
+                "own post stack. These four dials drive THAT stack, so they touch nothing outside " +
+                "the tube. 0 is off. Try 1 to 3.\n" +
+                "\n" +
+                "The stack ships with only ScreenSpaceReflections in it, so these effects are " +
+                "created and added at runtime, and removed again when you turn them off. See F49.",
+                new AcceptableValueRange<float>(0f, 5f)));
+
+            OpticFringe = cfg.Bind(S_OPTIC, "Optic: colour fringing", 0f, new ConfigDescription(
+                "Colour separating toward the edge of the scope image, the way real glass does. " +
+                "0 is off; 0.2 to 0.5 is plenty. This one reads as a headache long before it " +
+                "reads as realism.",
+                new AcceptableValueRange<float>(0f, 1f)));
+
+            OpticVignette = cfg.Bind(S_OPTIC, "Optic: rim darkening", 0f, new ConfigDescription(
+                "Darkens the image toward the edge of the tube - the ring that says you are " +
+                "looking through a cylinder of glass rather than at a floating picture. This is " +
+                "the cue you pointed at in the reference footage.\n" +
+                "\n" +
+                "0 is off. 0.3 to 0.6 is about right.",
+                new AcceptableValueRange<float>(0f, 1f)));
+
+            OpticDistortion = cfg.Bind(S_OPTIC, "Optic: edge distortion", 0f, new ConfigDescription(
+                "Bows the scope image near the rim, which is the other half of reading as curved " +
+                "glass. POSITIVE barrels it outward, NEGATIVE pinches it inward - real optics " +
+                "usually pincushion slightly, so try small negatives first.\n" +
+                "\n" +
+                "0 is off. Stay under about 0.3 either way; past that it looks like a fisheye.",
+                new AcceptableValueRange<float>(-1f, 1f)));
 
             DumpLensMaterial = cfg.Bind(S_BODY, "Log the optic setup", false,
                 "DIAGNOSTIC, and the one thing that would move the scope glass forward.\n" +

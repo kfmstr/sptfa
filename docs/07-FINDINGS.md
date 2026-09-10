@@ -3458,3 +3458,83 @@ renderer is glass ends the same way.
 **Read the instrument before arguing with it.** "Value stuck (0.00)" contained the
 whole first answer, printed in the HUD, and the only work left was noticing that
 the number in the parentheses was zero.
+
+---
+
+## F49. The scope is a view inside a view, and it has its own stack
+
+The lens glare finally worked, and the owner's first reaction was the correct
+criticism: *"wow, but you are applying it to the entire view, not on the
+transparent lense material, perhaps would be most appropriate on the sniper scope
+view (since it is view in the view)."*
+
+Right, and the game agrees. `OpticCameraManager.Init`:
+
+```
+GetComponent<PostProcessVolume>()  ->  _postProcessVolume
+GetComponent<PostProcessLayer>()   ->  _postProcessLayer
+```
+
+and `SetSSR` shows exactly how BSG drives it:
+
+```csharp
+_postProcessVolume.profile.TryGetSettings<ScreenSpaceReflections>(out s);
+s.enabled.value = on;
+```
+
+So the scope image has its own PostProcessing v2 stack, entirely separate from the
+main camera's Prism. Effects put there touch nothing outside the tube.
+
+### One mechanism, all three cues
+
+F43 listed three things the reference footage shows and split them across two
+mechanisms, one of which was "a much larger job". They are all PPv2 effects, so
+they are all the same job:
+
+```
+Bloom               - the bright hotspot on the glass
+ChromaticAberration - colour fringing at the edge
+Vignette            - the ring, darkening toward the rim
+LensDistortion      - the round bow that says the glass is curved
+```
+
+The last two are exactly what he pointed at twice - *"nice circle around the ages,
+showing that the glass is curved"* and *"round distortion on the edges of the
+lense"* - and they were the pair I could not deliver through Prism at all.
+
+### Adding to a profile that ships nearly empty
+
+F48's dump showed the optic profile holds `ScreenSpaceReflections` and nothing
+else, so these have to be created, not enabled. The saving grace is that
+`PostProcessProfile` carries **non-generic** overloads:
+
+```
+AddSettings(Type) / RemoveSettings(Type) / HasSettings(Type)
+```
+
+Generic-method reflection would have made this several times the size. Everything
+added is recorded and removed on release; anything already present is left in
+place and only disabled. The profile belongs to the game.
+
+And the PPv2 rule that would have wasted the round silently, for the third time
+(F34, F36): a `ParameterOverride` only participates when `overrideState` is true.
+`SetParam` writes both, always.
+
+### On the full-screen version
+
+It stays, and it is not redundant - a bodycam lens does scatter across the whole
+frame. But its defaults are zero, it is the wrong tool for a scope, and the owner
+found that out the moment it worked. The two now sit in separate config sections
+so nobody reaches for the wrong one.
+
+### A near miss worth recording
+
+The edit that wired this in was applied by a script whose third anchor did not
+match. The first two edits had already been made in memory, the assert fired
+before the write, and **the file was never saved** - so `OpticStack` compiled
+cleanly as completely dead code, called from nowhere.
+
+The build succeeded and grew by 9 KB, which is exactly what a working change looks
+like from the outside. It was caught by grepping for the call site rather than
+trusting the build. Same shape as F31's stale DLL: **a green build is evidence the
+code compiles, never evidence it runs.**

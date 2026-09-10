@@ -218,6 +218,7 @@ namespace SPTFreeAim.Patches
             FocusDepth.Release();
             OpticHousing.Release();
             GameRefs.ReleasePrism();
+            Compat.OpticStack.Release();
             LocalPlayer = null;
             LocalPwa = null;
             if (_harmony != null) _harmony.UnpatchSelf();
@@ -336,6 +337,17 @@ namespace SPTFreeAim.Patches
             // us what the optic's own post stack already carries, which is the
             // only way to know - it is asset data, not code. F43.
             if (cfg.DumpLensMaterial.Value) GameRefs.DumpOpticSetupOnce();
+
+            try { ApplyOpticGlass(cfg); }
+            catch (Exception e)
+            {
+                Plugin.Log.LogError("Optic glass failed, switching it off: " + e);
+                cfg.OpticBloom.Value = 0f;
+                cfg.OpticFringe.Value = 0f;
+                cfg.OpticVignette.Value = 0f;
+                cfg.OpticDistortion.Value = 0f;
+                Compat.OpticStack.Release();
+            }
 
             try { ApplyLensGlare(cfg); }
             catch (Exception e)
@@ -885,6 +897,27 @@ namespace SPTFreeAim.Patches
         /// the raid and into the next one.
         /// </summary>
 
+
+        private static bool _opticGlassDriving;
+
+        /// <summary>
+        /// The glass effects that belong inside the tube rather than across the
+        /// whole screen. F49.
+        /// </summary>
+        private static void ApplyOpticGlass(FreeAimConfig cfg)
+        {
+            if (!cfg.OpticGlassActive)
+            {
+                if (_opticGlassDriving) { _opticGlassDriving = false; Compat.OpticStack.Release(); }
+                return;
+            }
+
+            if (!Compat.OpticStack.Ready && !Compat.OpticStack.Resolve()) return;
+
+            _opticGlassDriving = true;
+            Compat.OpticStack.Drive(cfg.OpticBloom.Value, cfg.OpticFringe.Value,
+                                    cfg.OpticVignette.Value, cfg.OpticDistortion.Value);
+        }
 
         private static bool _glareDriving;
 

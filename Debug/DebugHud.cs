@@ -110,6 +110,13 @@ namespace SPTFreeAim.Debugging
                                     cfg.GlareChromatic.Value) + "   " + GameRefs.PrismVerdict
                               : "<color=#ffcc55>" + GameRefs.PrismWhyNot + "</color>")
                         : "off") +
+                Row("optic glass", cfg.OpticGlassActive
+                        ? (Compat.OpticStack.Ready
+                              ? string.Format("<color=#7fd1b9>bloom {0:F1}</color> fringe {1:F2} rim {2:F2} bow {3:F2}",
+                                    cfg.OpticBloom.Value, cfg.OpticFringe.Value,
+                                    cfg.OpticVignette.Value, cfg.OpticDistortion.Value)
+                              : "<color=#ffcc55>" + Compat.OpticStack.Status + "</color>")
+                        : "off") +
                 Row("sight alpha", cfg.SightAlpha.Value > 0.001f
                         ? OpticHousing.Status
                         : "off") +
@@ -135,8 +142,8 @@ namespace SPTFreeAim.Debugging
 
             // Grows with the rows. A clipped HUD is a HUD you stop trusting, and
             // the hinge row is wider now that it prints the live pivot.
-            GUI.Box(new Rect(10, 10, 560, 432), GUIContent.none, _boxStyle);
-            GUI.Label(new Rect(20, 18, 540, 416), "<b>SPT Free Aim</b>\n\n" + body, _style);
+            GUI.Box(new Rect(10, 10, 560, 450), GUIContent.none, _boxStyle);
+            GUI.Label(new Rect(20, 18, 540, 434), "<b>SPT Free Aim</b>\n\n" + body, _style);
         }
 
 
