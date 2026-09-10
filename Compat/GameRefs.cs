@@ -614,6 +614,7 @@ namespace SPTFreeAim.Compat
                                  _fNearBlur, _fFocalTransform;
         private static PropertyInfo _pBehaviourEnabled;
 
+        private static string _dofLastField = "none";
         private static float _stockFocalLength, _stockFocalSize, _stockMaxBlur;
         private static bool _stockNearBlur, _stockEnabled;
         private static object _stockFocalTransform;
@@ -744,18 +745,36 @@ namespace SPTFreeAim.Compat
                 // game's Init copies one across from the prefab, so writing
                 // focalLength without clearing this can be a silent no-op. Exactly
                 // the failure mode of F34.
+                _dofLastField = "focalTransform";
                 if (_fFocalTransform != null) _fFocalTransform.SetValue(_dof, null);
 
+                _dofLastField = "nearBlur";
                 if (_fNearBlur != null) _fNearBlur.SetValue(_dof, true);
+
+                _dofLastField = "focalLength";
                 if (_fFocalLength != null) _fFocalLength.SetValue(_dof, focusMetres);
+
+                _dofLastField = "focalSize";
                 if (_fFocalSize != null) _fFocalSize.SetValue(_dof, band);
+
+                _dofLastField = "maxBlurSize";
                 if (_fMaxBlur != null) _fMaxBlur.SetValue(_dof, blur);
+
+                // A PROPERTY, not a field - and the only property in this method,
+                // which makes it the prime suspect for a TargetInvocationException.
+                // Behaviour.enabled throws if the component has been destroyed, and
+                // the stock capture already read enabled=False, so something else
+                // may well have taken this component away.
+                _dofLastField = "enabled (property)";
                 if (_pBehaviourEnabled != null) _pBehaviourEnabled.SetValue(_dof, true, null);
+
+                _dofLastField = "none";
             }
             catch (Exception e)
             {
-                DofWhyNot = e.GetType().Name + " while writing - giving up";
-                Plugin.Log.LogWarning("Depth of field: " + DofWhyNot);
+                DofWhyNot = Explain(e);
+                Plugin.Log.LogWarning("Depth of field: " + DofWhyNot +
+                    "   (last field attempted: " + _dofLastField + ")");
                 _dof = null;
             }
         }
@@ -1108,6 +1127,7 @@ namespace SPTFreeAim.Compat
         // in the codebase looking like a working diagnostic for several rounds.
 
         private static bool _opticDumped;
+        private static bool _opticDumpDeferred;
 
         public static void DumpOpticSetupOnce()
         {
@@ -1189,6 +1209,24 @@ namespace SPTFreeAim.Compat
                         }
                 }
 
+                // Only latch once a sight was actually fitted. The first version
+                // latched on the first call, which happened before any optic
+                // existed, so it printed "NONE FITTED" once and never ran again -
+                // and the lens-material half, the only half transparency needs,
+                // never appeared at all. A diagnostic that fires before the thing
+                // it diagnoses exists is a diagnostic that never fires. F48.
+                if (sight == null)
+                {
+                    if (!_opticDumpDeferred)
+                    {
+                        _opticDumpDeferred = true;
+                        Plugin.Log.LogInfo("Optic setup: no sight fitted yet - will dump when one is. "
+                                           + "Volume profile listed above.");
+                        Plugin.Log.LogInfo(sb.ToString());
+                    }
+                    return;
+                }
+
                 _opticDumped = true;
                 Plugin.Log.LogInfo(sb.ToString());
             }
@@ -1197,6 +1235,50 @@ namespace SPTFreeAim.Compat
                 _opticDumped = true;
                 Plugin.Log.LogWarning("Optic setup dump failed: " + e.Message);
             }
+        }
+
+        /// <summary>
+        /// The renderer of the glass you look THROUGH, by reference.
+        ///
+        /// Transparency was excluding the lens by matching names, and it missed:
+        /// the HUD reported "2 parts" and the EOTech window went opaque, because
+        /// the glass was one of the two parts being swapped onto a generic shader.
+        ///
+        /// The game names this exactly - OpticSight.LensRenderer - so comparing
+        /// references beats guessing from names, the same way F38 beat four rounds
+        /// of pivot guessing by reading the number the weapon carries.
+        /// </summary>
+        public static Renderer GetCurrentLensRenderer()
+        {
+            try
+            {
+                Assembly asmCSharp = AppDomain.CurrentDomain.GetAssemblies()
+                    .FirstOrDefault(a => a.GetName().Name == "Assembly-CSharp");
+                if (asmCSharp == null) return null;
+
+                Type camMgr = asmCSharp.GetType("EFT.CameraControl.CameraManager", false);
+                if (camMgr == null) return null;
+
+                PropertyInfo instProp = camMgr.GetProperty("Instance",
+                    BindingFlags.Static | BindingFlags.Public | BindingFlags.NonPublic);
+                object inst = instProp == null ? null : instProp.GetValue(null, null);
+                if (inst == null) return null;
+
+                PropertyInfo pOcm = camMgr.GetProperty("OpticCameraManager",
+                    BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
+                object ocm = pOcm == null ? null : pOcm.GetValue(inst, null);
+                if (ocm == null) return null;
+
+                PropertyInfo pSight = ocm.GetType().GetProperty("CurrentOpticSight",
+                    BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
+                object sight = pSight == null ? null : pSight.GetValue(ocm, null);
+                if (sight == null) return null;
+
+                FieldInfo fLens = sight.GetType().GetField("LensRenderer",
+                    BindingFlags.Instance | BindingFlags.Public);
+                return fLens == null ? null : fLens.GetValue(sight) as Renderer;
+            }
+            catch { return null; }
         }
 
         private static object GetMemberValue(object target, string name)
@@ -1231,6 +1313,24 @@ namespace SPTFreeAim.Compat
         // Lens dirt is the one that matters most. Bloom on its own reads as a
         // glow; bloom modulated by a dirt texture reads as light scattering off
         // GLASS, which is what a lens does and what the reference footage shows.
+
+        /// <summary>
+        /// Reflection hides the real error. FieldInfo/PropertyInfo/MethodInfo
+        /// wrap whatever the target threw in a TargetInvocationException, so
+        /// "TargetInvocationException while writing" names the messenger and not
+        /// the message - which is exactly how the depth of field spent a whole
+        /// raid failing without saying why (docs/07-FINDINGS.md F46).
+        /// </summary>
+        private static string Explain(Exception e)
+        {
+            Exception inner = e;
+            while (inner is TargetInvocationException && inner.InnerException != null)
+                inner = inner.InnerException;
+
+            return inner == e
+                ? e.GetType().Name + ": " + e.Message
+                : e.GetType().Name + " wrapping " + inner.GetType().Name + ": " + inner.Message;
+        }
 
         private static object _prism;
         private static readonly string[] PrismDriven =
@@ -1327,13 +1427,19 @@ namespace SPTFreeAim.Compat
             if (_prism == null) return;
             try
             {
-                object stockBloom;
-                float baseBloom = 1f;
-                if (_prismStock.TryGetValue("bloomIntensity", out stockBloom) && stockBloom is float)
-                    baseBloom = (float)stockBloom;
-
+                // ABSOLUTE, not a multiplier.
+                //
+                // It used to be `stockBloom * dial`, on the reasoning that 1.0
+                // would then mean "stock Tarkov" and the number would be easy to
+                // picture. On this install Amands Graphics sets Prism's own bloom
+                // to ZERO and renders its own, so stock was 0 and the dial was
+                // arithmetically incapable of doing anything: 0 x 5 = 0. The
+                // read-back reported "value stuck (0.00)" and was exactly right.
+                //
+                // A scale factor is only intuitive while the thing it scales is
+                // non-zero. An absolute cannot be defeated that way. F48.
                 PrismSet("useBloom", true);
-                PrismSet("bloomIntensity", baseBloom * bloomMul);
+                PrismSet("bloomIntensity", bloomMul);
                 if (threshold > 0f) PrismSet("bloomThreshold", threshold);
 
                 if (dirt > 0.001f && PrismHasDirtTexture)
@@ -1347,12 +1453,70 @@ namespace SPTFreeAim.Compat
                     PrismSet("useChromaticAberration", true);
                     PrismSet("chromaticIntensity", chromatic);
                 }
+
+                VerifyPrismStuck(bloomMul);
             }
             catch (Exception e)
             {
-                PrismWhyNot = e.GetType().Name + " while writing - giving up";
+                PrismWhyNot = Explain(e) + " while writing - giving up";
                 Plugin.Log.LogWarning("Lens glare: " + PrismWhyNot);
                 _prism = null;
+            }
+        }
+
+        private static bool _prismVerified;
+        public static string PrismVerdict = "not checked yet";
+
+        /// <summary>
+        /// Write, then read back.
+        ///
+        /// Three other mods patch PrismEffects on this install - Amands Graphics,
+        /// Amands Sense and Smajlec Lights - and Amands Graphics carries its own
+        /// Bloom Intensity and ChromaticAberration. A write that lands in the
+        /// field is still not a write that survives to the next frame, or that
+        /// anything renders.
+        ///
+        /// So this reads the value back one frame later and reports which of the
+        /// three worlds we are in, instead of leaving "no effect" to be argued
+        /// about:
+        ///
+        ///   value gone      -> something overwrites us; a mod owns this field
+        ///   value stuck     -> Prism has our number, so if nothing is visible the
+        ///                      rendering is happening somewhere else
+        ///
+        /// F34's rule, one level further out: an API call that succeeds is not an
+        /// API call that did something, and a field that accepts a value is not a
+        /// field that keeps it.
+        /// </summary>
+        private static void VerifyPrismStuck(float expectedBloom)
+        {
+            if (_prismVerified) return;
+
+            FieldInfo f;
+            if (!_prismFields.TryGetValue("bloomIntensity", out f)) return;
+
+            object now = f.GetValue(_prism);
+            if (!(now is float)) return;
+
+            float actual = (float)now;
+            _prismVerified = true;
+
+            if (Mathf.Abs(actual - expectedBloom) > 0.01f)
+            {
+                PrismVerdict = string.Format(
+                    "OVERWRITTEN - wrote {0:F2}, read back {1:F2}", expectedBloom, actual);
+                Plugin.Log.LogWarning(
+                    "Lens glare: " + PrismVerdict + ". Another mod owns PrismEffects.bloomIntensity - " +
+                    "Amands Graphics, Amands Sense and Smajlec Lights all patch PrismEffects. " +
+                    "Turn that mod's bloom down instead, or turn it off, and this dial will bite.");
+            }
+            else
+            {
+                PrismVerdict = string.Format("value stuck ({0:F2})", actual);
+                Plugin.Log.LogInfo(
+                    "Lens glare: " + PrismVerdict + ". Prism holds our number, so if nothing looks " +
+                    "different another mod is doing the bloom rendering itself rather than through " +
+                    "this component.");
             }
         }
 

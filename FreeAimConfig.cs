@@ -111,7 +111,7 @@ namespace SPTFreeAim
         {
             get
             {
-                return Mathf.Abs(GlareBloom.Value - 1f) > 0.01f
+                return GlareBloom.Value > 0.001f
                     || GlareDirt.Value > 0.001f
                     || GlareChromatic.Value > 0.001f;
             }
@@ -529,13 +529,14 @@ namespace SPTFreeAim
                 "low ready, with the muzzle at the floor, it reads as a twist rather than a cant. " +
                 "Use it only if the barrel axis turns out to be wrong on some weapon.");
 
-            GlareBloom = cfg.Bind(S_BODY, "Glare: bloom", 1f, new ConfigDescription(
+            GlareBloom = cfg.Bind(S_BODY, "Glare: bloom", 0f, new ConfigDescription(
                 "Light scattering off the glass, the way it does on a camera lens.\n" +
                 "\n" +
-                "A MULTIPLIER on the game's own bloom, so 1.0 is stock Tarkov and IS the off " +
-                "position - there is no separate switch to remember. Around 1.5 to 2 gives " +
-                "highlights that bleed the way they do through a lens; past 3 the whole screen " +
-                "hazes over.\n" +
+                "An ABSOLUTE intensity, and 0 is off - there is no separate switch to remember.\n" +
+                "\n" +
+                "This used to be a multiplier on the game's own bloom, which was a mistake: some " +
+                "graphics mods set Prism's bloom to ZERO and render their own, and no multiplier " +
+                "can lift zero. Try 1 to 3 here; past 4 the whole screen hazes over.\n" +
                 "\n" +
                 "This drives Prism, which Tarkov already runs on the camera and already writes to " +
                 "itself for noise, auto exposure and the near-miss vignette. Same move as the gun " +

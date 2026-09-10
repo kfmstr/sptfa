@@ -3365,3 +3365,96 @@ lines this would have looked exactly like the F42 crash and I would have gone
 hunting for an exception that was not there. That is now three findings running
 (F44, F45, F46, this) where the answer was already in the log or on the HUD, and
 the work was reading it rather than reasoning about it.
+
+---
+
+## F48. A multiplier cannot lift zero, and a diagnostic that fires too early never fires
+
+Three separate answers, all of them read off his screen and his log rather than
+reasoned about. That is the part worth keeping.
+
+### The glare dial was arithmetically incapable
+
+The HUD read:
+
+```
+lens glare   bloom x5.00  dirt 3.00  fringe 2.00   value stuck (0.00)
+```
+
+The read-back added in F46 did its job perfectly and I nearly misread it. "Value
+stuck" means the write survived - and the value that survived was **zero**.
+
+```csharp
+expectedBloom = stockBloom * bloomMul;     // 0 * 5 = 0
+```
+
+Amands Graphics sets Prism's own `bloomIntensity` to 0 and renders bloom through
+its own chain. So the stock value was zero, and a multiplier on zero is zero at
+every setting from 0 to 5. He pushed every dial to maximum and the design
+guaranteed nothing would happen.
+
+I chose the multiplier deliberately, and the reasoning in the comment was that
+"1.0 means stock Tarkov" is easier to picture than an absolute. That is true and
+it is beside the point: **a scale factor is only meaningful while the thing it
+scales is non-zero.** Absolute now, 0 is off.
+
+Note this is the second time the same instinct has cost a round. F38 restored the
+FOV to `HeadBobbing` rather than adding 15 back, and that WAS right - because
+HeadBobbing is never zero. The rule is not "prefer relative"; it is "prefer
+relative only where the base cannot vanish".
+
+### The optic post stack does not contain what the curved glass needs
+
+This is what the diagnostic was built for, and the answer is a flat no:
+
+```
+optic post volume: PostProcessVolume
+  profile: PostProcessProfile
+    EFFECT ScreenSpaceReflections   enabled=True
+current optic sight: NONE FITTED
+```
+
+One effect in the entire profile. **No LensDistortion, no Vignette, no Bloom, no
+ChromaticAberration.** The rim ring and the edge distortion cannot be switched on
+because they are not there; they would have to be constructed and injected into a
+PPv2 profile at runtime.
+
+F43 hedged between "two writes away" and "a much larger job". It is the larger
+job, and now that is a measurement rather than a guess.
+
+### The diagnostic fired before the thing it diagnoses existed
+
+`current optic sight: NONE FITTED`, and it never ran again, because
+`_opticDumped` latched on the first call - which happens as soon as the option is
+on, long before a scope is aimed through.
+
+So the half that mattered, the lens material and its shader properties, has never
+printed once. **A diagnostic that latches before its subject exists is a
+diagnostic that never fires**, and it looks identical to one that ran and found
+nothing.
+
+It now only latches once a sight is actually fitted, and says so meanwhile.
+
+### Transparency: the shader swap is the damage, not the alpha
+
+His report: at one setting nothing, one notch up the glass goes opaque - "the
+glass is turning untransparent instead". The HUD said `2 parts at alpha 1.00`.
+
+Alpha 1.00 is fully opaque, so the alpha was not the problem. **Swapping the
+lens onto a generic blend shader ruins it before alpha is considered**, because
+an EOTech window is a specialised reflective-glass material and
+`Legacy Shaders/Transparent/Diffuse` cannot be it.
+
+The lens should never have been in the set. It was excluded by NAME matching,
+which missed. The game names it exactly - `OpticSight.LensRenderer` - so it is now
+excluded **by reference**.
+
+That is F38's lesson again, one object over: four rounds of guessing the pivot
+ended when I read the number the weapon carries, and a round of guessing which
+renderer is glass ends the same way.
+
+### The lesson worth keeping
+
+**Read the instrument before arguing with it.** "Value stuck (0.00)" contained the
+whole first answer, printed in the HUD, and the only work left was noticing that
+the number in the parentheses was zero.

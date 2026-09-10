@@ -68,6 +68,7 @@ namespace SPTFreeAim.Patches
             // rather than popping at a threshold.
             float alpha = Mathf.Lerp(1f, 1f - Mathf.Clamp01(o.Alpha), Mathf.Clamp01(aimBlend));
 
+            Renderer lens = Compat.GameRefs.GetCurrentLensRenderer();
             Renderer[] rs = housingRoot.GetComponentsInChildren<Renderer>(false);
             int touched = 0;
             StringBuilder report = o.LogMaterials && !_logged ? new StringBuilder() : null;
@@ -78,6 +79,14 @@ namespace SPTFreeAim.Patches
 
                 // The lens and the reticle are the parts you look THROUGH. They
                 // are the point of the sight; leave them exactly as they are.
+                //
+                // Matched by REFERENCE against OpticSight.LensRenderer, not by
+                // name. The name match missed on the EOTech - two parts were
+                // swapped, one of them the glass, and the window went opaque
+                // whatever the alpha was, because replacing a specialised glass
+                // shader with a generic one ruins it before alpha is even
+                // considered. F48.
+                if (ReferenceEquals(r, lens)) continue;
                 if (Compat.GameRefs.IsReticleObject(r.gameObject)) continue;
 
                 Material[] src;
