@@ -770,6 +770,34 @@ namespace SPTFreeAim.Compat
         }
 
         /// <summary>
+        /// True when the sight being aimed through is a magnifying optic.
+        ///
+        /// This is the branch OnAimOrPoseChanged takes: an optic gets a flat 35
+        /// degrees - its magnification - while everything else gets
+        /// HeadBobbing minus fifteen, which is the shouldering lean. They look the
+        /// same from inside SetFov and they are completely different things, so
+        /// cancelling both with one switch takes the magnification off a sniper
+        /// scope. F39.
+        /// </summary>
+        public static bool IsCurrentScopeOptic(object pwa)
+        {
+            if (pwa == null) return false;
+            if (!M_CurrentScope.Resolved && !M_CurrentScope.Bind(pwa.GetType())) return false;
+
+            object scope = M_CurrentScope.Get(pwa);
+            if (scope == null) return false;
+
+            Type st = scope.GetType();
+            if (st != _boundScopeType)
+            {
+                M_SightBone.Bind(st);
+                M_SightIsOptic.Bind(st);
+                _boundScopeType = st;
+            }
+            return M_SightIsOptic.Get<bool>(scope, false);
+        }
+
+        /// <summary>
         /// The root of the optic's MESH, walked up from the aim bone.
         ///
         /// SightNBone.Bone is <c>mod_aim_camera</c> - the transform the game
@@ -998,7 +1026,12 @@ namespace SPTFreeAim.Compat
             Vector3 stock = M_RotationCenter.Get<Vector3>(spring, Vector3.zero);
             Vector3 hands = M_RotationCenterWoStock.Get<Vector3>(spring, stock);
 
-            centre = Vector3.Lerp(hands, stock, Mathf.Clamp01(stockWeight));
+            // Unclamped on purpose. 0 is the hands, 1 is the shoulder, and the
+            // useful range does not stop there: a NEGATIVE weight walks the pivot
+            // on past the hands centre - along the shoulder-to-hands line, which
+            // points forward down the weapon - so the hinge can be pushed toward
+            // the muzzle if the authored hands centre still sits too far back.
+            centre = Vector3.LerpUnclamped(hands, stock, stockWeight);
             LastRotationCentre = centre;
             return true;
         }

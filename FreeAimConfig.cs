@@ -35,9 +35,13 @@ namespace SPTFreeAim
 
         // ---- Pivot -------------------------------------------------------
         public ConfigEntry<HingeMode> Hinge;
-        public ConfigEntry<Vector3> GripFromEye;
+        public ConfigEntry<float> GripRight, GripUp, GripForward;
+        public Vector3 GripFromEye
+        { get { return new Vector3(GripRight.Value, GripUp.Value, GripForward.Value); } }
         public ConfigEntry<float> PivotDistance;
-        public ConfigEntry<Vector3> PivotFineOffset;
+        public ConfigEntry<float> PivotOffsetX, PivotOffsetY, PivotOffsetZ;
+        public Vector3 PivotFineOffset
+        { get { return new Vector3(PivotOffsetX.Value, PivotOffsetY.Value, PivotOffsetZ.Value); } }
         public ConfigEntry<bool> InvertGamePitch;
         public ConfigEntry<bool> ApplyWeaponOffset;
         public ConfigEntry<bool> ApplyCameraOffset;
@@ -51,22 +55,32 @@ namespace SPTFreeAim
         public ConfigEntry<bool> StanceHoldToReady;
         public ConfigEntry<float> GateSpeed;
         public ConfigEntry<bool> LoweredPoseEnabled;
-        public ConfigEntry<Vector3> LoweredPos;
-        public ConfigEntry<Vector3> LoweredRot;
+        public ConfigEntry<float> LoweredPosX, LoweredPosY, LoweredPosZ;
+        public Vector3 LoweredPos
+        { get { return new Vector3(LoweredPosX.Value, LoweredPosY.Value, LoweredPosZ.Value); } }
+        public ConfigEntry<float> LoweredRotX, LoweredRotY, LoweredRotZ;
+        public Vector3 LoweredRot
+        { get { return new Vector3(LoweredRotX.Value, LoweredRotY.Value, LoweredRotZ.Value); } }
         public ConfigEntry<float> LoweredLerpSpeed;
         public ConfigEntry<bool> SuspendOnSprint;
         public ConfigEntry<bool> SuspendOnAnimation;
         public ConfigEntry<bool> SuspendOnStationary;
         public ConfigEntry<bool> ReadyPoseEnabled;
-        public ConfigEntry<Vector3> ReadyPos;
-        public ConfigEntry<Vector3> ReadyRot;
+        public ConfigEntry<float> ReadyPosX, ReadyPosY, ReadyPosZ;
+        public Vector3 ReadyPos
+        { get { return new Vector3(ReadyPosX.Value, ReadyPosY.Value, ReadyPosZ.Value); } }
+        public ConfigEntry<float> ReadyRotX, ReadyRotY, ReadyRotZ;
+        public Vector3 ReadyRot
+        { get { return new Vector3(ReadyRotX.Value, ReadyRotY.Value, ReadyRotZ.Value); } }
 
         // ---- Recoil ------------------------------------------------------
         public ConfigEntry<bool> DecoupleRecoil;
         public ConfigEntry<float> HipCameraFollow;
         public ConfigEntry<float> AimCameraFollow;
         public ConfigEntry<bool> RecoilMovesGun;
-        public ConfigEntry<Vector2> RecoilGunScale;
+        public ConfigEntry<float> RecoilScaleYaw, RecoilScalePitch;
+        public Vector2 RecoilGunScale
+        { get { return new Vector2(RecoilScaleYaw.Value, RecoilScalePitch.Value); } }
         public ConfigEntry<bool> RecoilSwapAxes;
 
         // ---- Body --------------------------------------------------------
@@ -88,6 +102,7 @@ namespace SPTFreeAim
         public ConfigEntry<bool> LogSightMaterials;
         public ConfigEntry<bool> DumpLensMaterial;
         public ConfigEntry<bool> KeepFovWhenAiming;
+        public ConfigEntry<bool> KeepFovWithOptics;
         public ConfigEntry<bool> ZoomOnHoldBreath;
         public ConfigEntry<float> ZoomTime;
         public ConfigEntry<bool> PivotFromWeapon;
@@ -170,35 +185,46 @@ namespace SPTFreeAim
 
             // -- pivot --
             Hinge = cfg.Bind(S_PIVOT, "Hinge mode", HingeMode.LegacyEuler, new ConfigDescription(
-                "LEGACY EULER is the original call and the DEFAULT - it is what was working in the\n" +
-                "early builds, and the reason it stopped is documented in F23: the stance poses\n" +
-                "rotate WeaponRoot, which is the parent frame this call reads. Those pose rotations\n" +
-                "are now suppressed while this mode is selected, so it behaves as it did then.\n" +
+                "AROUND GRIP is the one that actually hinges. Pick it if the gun does not swing " +
+                "about your hand.\n" +
                 "\n" +
-                "AROUND GRIP is the physical one. The right hand holds the pistol " +
-                "grip, the mouse moves the support hand, the weapon is the rigid link between them, " +
-                "so it turns about the grip and the muzzle swings. Yaw about the world vertical, " +
-                "pitch about the camera's right - the axes those words actually mean.\n" +
+                "LEGACY EULER is the original call and still the default, because it is what the " +
+                "early builds felt right with and changing a default underneath you has gone badly " +
+                "before. But it CANNOT rotate about a point, and that is arithmetic rather than " +
+                "opinion. TransformTools.LocalRotateAround displaces the weapon by\n" +
                 "\n" +
-                "LEGACY EULER is what every build before this one did: hand (pitch, 0, yaw) to " +
-                "TransformTools.LocalRotateAround. That method does not take local euler angles - it " +
-                "runs the vector through parent.TransformDirection and InverseTransformDirection " +
-                "first, so which way the gun turns depends on how it sits relative to its parent, " +
-                "and part of the mouse movement can land along the barrel and roll it. Kept only for " +
-                "comparison. docs/07-FINDINGS.md F22."));
+                "    (I - q) * c\n" +
+                "\n" +
+                "where a real rotation about the point c needs\n" +
+                "\n" +
+                "    R * (I - q) * c        (R = the weapon's own local rotation)\n" +
+                "\n" +
+                "Right length, wrong direction. The lever arm comes out in the PARENT's frame " +
+                "instead of the weapon's, so the horizontal part of the swing leaks away into " +
+                "pitch and into the barrel axis. No pivot dial can correct that - the dial sets " +
+                "c, and c is not the part that is wrong.\n" +
+                "\n" +
+                "AROUND GRIP does the honest thing instead: rotate the position about the pivot " +
+                "and rotate the orientation by the same amount. The muzzle swings one way, the " +
+                "buttstock swings the other, and the HUD prints the lever arm in metres so you " +
+                "can see it is non-zero. Turn on \"Take the pivot from the weapon itself\" with " +
+                "it and the hinge lands on the weapon's own hands centre. See F40.",
+                null));
 
-            GripFromEye = cfg.Bind(S_PIVOT, "Grip from eye (right, up, fwd, m)", new Vector3(0.14f, -0.24f, 0.16f),
-                "AROUND GRIP mode. Where your firing hand is, measured from the camera in metres: " +
-                "how far to your RIGHT, how far UP (negative = below the eye), and how far FORWARD.\n" +
-                "\n" +
-                "These are numbers you can picture and check against your own body, which is the " +
-                "point - a point in the weapon root's local space is not, and tuning that by eye " +
-                "never converged. The defaults are roughly where a right-handed shooter's grip hand " +
-                "sits with the weapon up: a hand's width right, most of a forearm below the eye, and " +
-                "a little in front.\n" +
-                "\n" +
-                "Further from the eye means the muzzle sweeps a longer arc for the same angle. All " +
-                "three take negatives; flip the first one for a left-handed hold.");
+            GripRight = cfg.Bind(S_PIVOT, "Grip: right of the eye (m)", 0.14f, new ConfigDescription(
+                "AROUND GRIP mode. How far your firing hand sits to the RIGHT of the camera, in " +
+                "metres. Negative for a left-handed hold.",
+                new AcceptableValueRange<float>(-1f, 1f)));
+
+            GripUp = cfg.Bind(S_PIVOT, "Grip: above the eye (m)", -0.24f, new ConfigDescription(
+                "AROUND GRIP mode. How far ABOVE the camera the hand sits. Negative is below, which " +
+                "is where a hand actually is - about most of a forearm down.",
+                new AcceptableValueRange<float>(-1f, 1f)));
+
+            GripForward = cfg.Bind(S_PIVOT, "Grip: forward of the eye (m)", 0.16f, new ConfigDescription(
+                "AROUND GRIP mode. How far FORWARD of the camera the hand sits. Further out means " +
+                "the muzzle sweeps a longer arc for the same angle.",
+                new AcceptableValueRange<float>(-1f, 1f)));
 
             PivotDistance = cfg.Bind(S_PIVOT, "Pivot distance (m)", -0.15f, new ConfigDescription(
                 "LEGACY EULER mode. Where the weapon hinges, as a distance along its local up axis. " +
@@ -209,10 +235,20 @@ namespace SPTFreeAim
                 "out. Larger magnitudes give the muzzle a longer arc for the same angle.",
                 new AcceptableValueRange<float>(-1f, 1f)));
 
-            PivotFineOffset = cfg.Bind(S_PIVOT, "Pivot fine offset", Vector3.zero,
-                "LEGACY EULER mode. Added on top of the distance above, for nudging the hinge off " +
-                "the up axis. Zero by default: get the single dial right first, and only reach for " +
-                "this if the grip is genuinely off that line.");
+            PivotOffsetX = cfg.Bind(S_PIVOT, "Pivot offset X (m)", 0f, new ConfigDescription(
+                "Nudges the hinge off the up axis, in the weapon root's local space. Added on top " +
+                "of the distance above, and on top of the weapon's own centre when that is in use.",
+                new AcceptableValueRange<float>(-0.5f, 0.5f)));
+
+            PivotOffsetY = cfg.Bind(S_PIVOT, "Pivot offset Y (m)", 0f, new ConfigDescription(
+                "The same, on the second axis.",
+                new AcceptableValueRange<float>(-0.5f, 0.5f)));
+
+            PivotOffsetZ = cfg.Bind(S_PIVOT, "Pivot offset Z (m)", 0f, new ConfigDescription(
+                "The same, on the third axis. On most weapons this is the one that walks the hinge " +
+                "along the barrel, which is the direction that decides how much the buttstock " +
+                "swings when you turn.",
+                new AcceptableValueRange<float>(-0.5f, 0.5f)));
 
             InvertGamePitch = cfg.Bind(S_PIVOT, "Invert game pitch", true,
                 "Normalises which way pitch counts, at the point the bearing is READ from the game " +
@@ -259,12 +295,27 @@ namespace SPTFreeAim
             LoweredPoseEnabled = cfg.Bind(S_STANCE, "Apply lowered pose", true,
                 "Visually lower the weapon in the down stance. Off leaves the pose alone and only " +
                 "gates free aim.");
-            LoweredPos = cfg.Bind(S_STANCE, "Lowered position offset", Vector3.zero,
-                "Position offset for the weapon-down pose. UNMEASURED - zero means no visual " +
-                "lowering until you set it. Tune by eye against Bodycam; there is no source to " +
-                "copy a number from (docs/07-FINDINGS.md F16).");
-            LoweredRot = cfg.Bind(S_STANCE, "Lowered rotation offset", Vector3.zero,
-                "Rotation offset for the weapon-down pose. UNMEASURED - see above.");
+            LoweredPosX = cfg.Bind(S_STANCE, "Lowered position X (m)", 0f, new ConfigDescription(
+                "Weapon-down pose, sideways. UNMEASURED - zero means no visual lowering until you " +
+                "set it. Tune by eye against Bodycam (docs/07-FINDINGS.md F16).",
+                new AcceptableValueRange<float>(-1f, 1f)));
+            LoweredPosY = cfg.Bind(S_STANCE, "Lowered position Y (m)", 0f, new ConfigDescription(
+                "Weapon-down pose, vertical. Negative drops the weapon.",
+                new AcceptableValueRange<float>(-1f, 1f)));
+            LoweredPosZ = cfg.Bind(S_STANCE, "Lowered position Z (m)", 0f, new ConfigDescription(
+                "Weapon-down pose, along the third axis.",
+                new AcceptableValueRange<float>(-1f, 1f)));
+
+            LoweredRotX = cfg.Bind(S_STANCE, "Lowered rotation X (deg)", 0f, new ConfigDescription(
+                "Weapon-down pose, pitch. UNMEASURED - see above.",
+                new AcceptableValueRange<float>(-180f, 180f)));
+            LoweredRotY = cfg.Bind(S_STANCE, "Lowered rotation Y (deg)", 0f, new ConfigDescription(
+                "Weapon-down pose, yaw.",
+                new AcceptableValueRange<float>(-180f, 180f)));
+            LoweredRotZ = cfg.Bind(S_STANCE, "Lowered rotation Z (deg)", 0f, new ConfigDescription(
+                "Weapon-down pose, roll.",
+                new AcceptableValueRange<float>(-180f, 180f)));
+
             LoweredLerpSpeed = cfg.Bind(S_STANCE, "Lowered pose lerp speed", 6f, new ConfigDescription(
                 "How fast the weapon moves into the lowered pose, per second. 6/s is roughly a " +
                 "sixth of a second to settle - fast enough not to feel sluggish, slow enough to " +
@@ -292,14 +343,27 @@ namespace SPTFreeAim
                 "so this offsets away from it. Off by default - the values below are zero, because " +
                 "they have to be found by eye and a guess would just be noise. Fades out as you aim.");
 
-            ReadyPos = cfg.Bind(S_STANCE, "Ready position offset", Vector3.zero,
-                "Position offset for the un-shouldered ready stance (docs/07-FINDINGS.md F12.2). " +
-                "UNMEASURED. The target is buttstock behind the arm near the hip, firing hand " +
-                "lowered - not the shoulder pocket. Set cone to 25 to make the pose obvious while " +
-                "you tune, then put it back.");
+            ReadyPosX = cfg.Bind(S_STANCE, "Ready position X (m)", 0f, new ConfigDescription(
+                "Un-shouldered ready stance, sideways (docs/07-FINDINGS.md F12.2). UNMEASURED. The " +
+                "target is buttstock behind the arm near the hip, firing hand lowered - not the " +
+                "shoulder pocket. Set cone to 25 while you tune, then put it back.",
+                new AcceptableValueRange<float>(-1f, 1f)));
+            ReadyPosY = cfg.Bind(S_STANCE, "Ready position Y (m)", 0f, new ConfigDescription(
+                "Ready stance, vertical. Negative drops the weapon.",
+                new AcceptableValueRange<float>(-1f, 1f)));
+            ReadyPosZ = cfg.Bind(S_STANCE, "Ready position Z (m)", 0f, new ConfigDescription(
+                "Ready stance, along the third axis.",
+                new AcceptableValueRange<float>(-1f, 1f)));
 
-            ReadyRot = cfg.Bind(S_STANCE, "Ready rotation offset", Vector3.zero,
-                "Rotation offset for the ready stance. UNMEASURED - see above.");
+            ReadyRotX = cfg.Bind(S_STANCE, "Ready rotation X (deg)", 0f, new ConfigDescription(
+                "Ready stance, pitch. UNMEASURED - see above.",
+                new AcceptableValueRange<float>(-180f, 180f)));
+            ReadyRotY = cfg.Bind(S_STANCE, "Ready rotation Y (deg)", 0f, new ConfigDescription(
+                "Ready stance, yaw.",
+                new AcceptableValueRange<float>(-180f, 180f)));
+            ReadyRotZ = cfg.Bind(S_STANCE, "Ready rotation Z (deg)", 0f, new ConfigDescription(
+                "Ready stance, roll.",
+                new AcceptableValueRange<float>(-180f, 180f)));
 
             // -- recoil --
             DecoupleRecoil = cfg.Bind(S_RECOIL, "Decouple recoil", false,
@@ -321,9 +385,14 @@ namespace SPTFreeAim
                 "Off by default until the axis mapping is confirmed: watch the HUD's recoil row " +
                 "while firing to see which component moves, then set the scale below.");
 
-            RecoilGunScale = cfg.Bind(S_RECOIL, "Recoil to gun scale (yaw, pitch)", new Vector2(1f, 1f),
-                "How much of the weapon's recoil reaches the gun bearing. Negative flips the " +
-                "direction. Zero on an axis disables it. Start at (1, 1) and watch the HUD.");
+            RecoilScaleYaw = cfg.Bind(S_RECOIL, "Recoil to gun scale - yaw", 1f, new ConfigDescription(
+                "How much of the weapon's recoil reaches the gun bearing sideways. Negative flips " +
+                "the direction, zero disables it. Start at 1 and watch the HUD.",
+                new AcceptableValueRange<float>(-5f, 5f)));
+
+            RecoilScalePitch = cfg.Bind(S_RECOIL, "Recoil to gun scale - pitch", 1f, new ConfigDescription(
+                "The same, vertically. Negative flips the direction, zero disables it.",
+                new AcceptableValueRange<float>(-5f, 5f)));
 
             RecoilSwapAxes = cfg.Bind(S_RECOIL, "Recoil swap axes", false,
                 "Flip if the recoil climbs sideways instead of up. The Vector3 the game exposes " +
@@ -370,8 +439,13 @@ namespace SPTFreeAim
                 "asked for. 1 uses the braced centre, which is the stock Tarkov feel. In between " +
                 "blends the two.\n" +
                 "\n" +
+                "It does not stop at either end. NEGATIVE walks the pivot on past the hands centre, " +
+                "along the same line, which points forward down the weapon - so if the authored " +
+                "hands centre still sits too far back for you, -0.5 pushes the hinge toward the " +
+                "muzzle. Above 1 goes the other way, behind the shoulder.\n" +
+                "\n" +
                 "Only does anything when the switch above is on.",
-                new AcceptableValueRange<float>(0f, 1f)));
+                new AcceptableValueRange<float>(-2f, 2f)));
 
             GunRollEnabled = cfg.Bind(S_PIVOT, "Gun rolls as it swings", false,
                 "Cants the weapon while it swings, the way your wrist rolls when the support hand " +
@@ -503,6 +577,20 @@ namespace SPTFreeAim
                 "have: it wrote CameraManager.AimDeltaFov, a const that nothing in the game reads. " +
                 "See docs/07-FINDINGS.md F38.");
 
+            KeepFovWithOptics = cfg.Bind(S_BODY, "Keep your field of view with optics too", false,
+                "OFF by default, and it should usually stay off.\n" +
+                "\n" +
+                "An optic is a different animal from iron sights. Tarkov hands irons and red dots " +
+                "your own field of view minus fifteen degrees - that is the shouldering lean, and " +
+                "cancelling it is the whole point of the switch above. But it hands a magnifying " +
+                "optic a flat thirty-five, and THAT is the magnification. From inside the game's " +
+                "own SetFov the two look identical, so one switch cancelling both takes the zoom " +
+                "straight off a sniper scope.\n" +
+                "\n" +
+                "Off, scopes magnify exactly as they always did and only irons and red dots stop " +
+                "leaning in. Turn this on only if you want a scope to stop magnifying, which is " +
+                "almost certainly not what you want. See docs/07-FINDINGS.md F39.");
+
             ZoomOnHoldBreath = cfg.Bind(S_BODY, "Zoom in when holding breath", true,
                 "Give the zoom back while you hold your breath - now you really are putting your " +
                 "eye to the sight and focusing on the target, and it costs stamina to do it.\n" +
@@ -530,7 +618,7 @@ namespace SPTFreeAim
                 "Intercept mode is viable and docs/02-PLAN.md step 03 is far cheaper than budgeted.");
             ProbeWriteDegrees = cfg.Bind(S_DEBUG, "Yaw write probe amount (deg)", 20f, new ConfigDescription(
                 "Large enough to be unmistakable on screen.",
-                new AcceptableValueRange<float>(1f, 90f)));
+                new AcceptableValueRange<float>(-90f, 90f)));
 
             VerboseLogging = cfg.Bind(S_DEBUG, "Verbose logging", false,
                 "Per-frame values to the BepInEx console. Noisy; for short captures only.");

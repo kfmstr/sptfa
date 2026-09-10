@@ -72,6 +72,55 @@ public static class ConfigKeyTests
               dupes.Count == 0,
               dupes.Count == 0 ? "all unique" : string.Join("; ", dupes.ToArray()));
 
+        // No Vector2/Vector3 config entries.
+        //
+        // docs/07-FINDINGS.md F39: the config UI draws a vector as three text
+        // boxes and re-parses each on every keystroke, so a lone "-" has nothing
+        // to parse and the character is discarded. The value was never clamped -
+        // a negative simply could not be TYPED, which looks identical from the
+        // outside and wasted a round of "are you sure you implemented this".
+        //
+        // Individual floats with signed AcceptableValueRanges get sliders, which
+        // have no such problem. This keeps them from creeping back.
+        MatchCollection vecs = Regex.Matches(src, @"ConfigEntry<(Vector[234])>\s+(\w+)");
+        var vecNames = new List<string>();
+        foreach (Match m in vecs) vecNames.Add(m.Groups[2].Value + " (" + m.Groups[1].Value + ")");
+
+        Check("no config entry is a vector type",
+              vecNames.Count == 0,
+              vecNames.Count == 0 ? "all scalar"
+                                  : "cannot type a minus into: " + string.Join("; ", vecNames.ToArray()));
+
+        // Anything measured in metres or degrees is a direction as well as a
+        // magnitude, so its range has to reach below zero.
+        MatchCollection signed = Regex.Matches(src,
+            @"cfg\.Bind\(\s*S_[A-Z]+\s*,\s*""([^""]*\((?:m|deg)\)[^""]*)""[\s\S]{0,600}?AcceptableValueRange<float>\(\s*(-?[\d.]+)f");
+        // Three genuine magnitudes, named here rather than silently skipped. A
+        // cone and a cap are radii - a negative cone is not a mirrored cone, it
+        // is nothing - and a focus distance is how far out in front to look.
+        // Where flipping IS meaningful there is an explicit invert switch.
+        var magnitudes = new List<string>
+        {
+            "Cone size (deg)",
+            "Hard cap (deg)",
+            "Gun blur: max focus distance (m)"
+        };
+
+        var unsigned = new List<string>();
+        int signedCount = 0;
+        foreach (Match m in signed)
+        {
+            string key = m.Groups[1].Value;
+            if (magnitudes.Contains(key)) continue;
+            signedCount++;
+            if (double.Parse(m.Groups[2].Value) >= 0) unsigned.Add(key);
+        }
+
+        Check("every (m) and (deg) dial reaches below zero",
+              unsigned.Count == 0,
+              unsigned.Count == 0 ? signedCount + " checked, all signed"
+                                  : "positive-only: " + string.Join("; ", unsigned.ToArray()));
+
         Console.WriteLine();
         Console.WriteLine(_fail == 0 ? "ALL CONFIG KEY CHECKS PASSED" : _fail + " CHECK(S) FAILED");
         Environment.Exit(_fail == 0 ? 0 : 1);

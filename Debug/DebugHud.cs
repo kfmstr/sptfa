@@ -60,10 +60,14 @@ namespace SPTFreeAim.Debugging
                         st.RecoilRaw.x, st.RecoilRaw.y, st.RecoilRaw.z, st.RecoilOffset.x, st.RecoilOffset.y)) +
                 "\n" +
                 Row("hinge", cfg.Hinge.Value == HingeMode.AroundGrip
-                        ? string.Format("<color=#7fd1b9>AROUND GRIP</color>  pivot {0,6:F2} {1,6:F2} {2,6:F2}  (grip {3})",
-                              FreeAimPatches.LastPivot.x, FreeAimPatches.LastPivot.y,
-                              FreeAimPatches.LastPivot.z, cfg.GripFromEye.Value)
-                        : string.Format("<color=#ffcc55>LEGACY EULER</color>  pivot {0,6:F3} {1,6:F3} {2,6:F3}  {3}",
+                        ? string.Format("<color=#7fd1b9>AROUND GRIP</color>  lever <color=#7fd1b9>{0:F3} m</color>   {1}",
+                              FreeAimPatches.LastLever,
+                              cfg.PivotFromWeapon.Value
+                                  ? (GameRefs.RotationCentreAvailable
+                                        ? "<color=#7fd1b9>centre from weapon</color>"
+                                        : "<color=#ffcc55>" + GameRefs.RotationCentreWhyNot + "</color>")
+                                  : "grip " + cfg.GripFromEye)
+                        : string.Format("<color=#ff6666>LEGACY EULER</color> cannot hinge (F40)  pivot {0,5:F2} {1,5:F2} {2,5:F2} {3}",
                               FreeAimPatches.LastPivotLocal.x, FreeAimPatches.LastPivotLocal.y,
                               FreeAimPatches.LastPivotLocal.z,
                               cfg.PivotFromWeapon.Value

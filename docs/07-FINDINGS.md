@@ -1240,6 +1240,11 @@ new mechanics go in off, and get turned on one at a time by someone watching.
 
 ## F22. The rotation was never a rotation about a point
 
+> **Completed by F40.** This finding read LocalRotateAround's ROTATION and
+> stopped one line early. Its POSITION line is broken too: it displaces by
+> (I - q)*c where a rotation about c needs R*(I - q)*c. There is no hinge at
+> all, which is why no pivot value ever fixed it.
+
 After the rollback, the owner again:
 
 > The version you got me is already moving gun so that barrel of the gun in the
@@ -2588,3 +2593,164 @@ Both are the same failure as F36 - finding *a* mechanism that matches the
 description and stopping, instead of finding the one the game actually uses. That
 is three findings in a row. The probe that keeps paying is the cross-reference,
 not the lookup.
+
+---
+
+## F39. Allowed and typeable are not the same thing
+
+The owner: *"Are you sure you've implemented these, still only positive values
+for the x,y,z across all parameters."*
+
+I was sure, and I was wrong in the most annoying way available: I had checked the
+right thing and drawn the wrong conclusion from it. Every Vector3 config entry
+was bound with **no** `AcceptableValueRange` at all, and I reported that as "any
+component takes any sign". The values were never clamped. They could not be
+**typed**.
+
+The config UI draws a Vector3 as three text boxes and re-parses each one on every
+keystroke. To enter `-0.15` you must first enter `-`, and `-` on its own is not a
+number, so the parse fails and the character is discarded. The field can *display*
+a negative that came from a default - his HUD was showing `grip (0.14, -0.24,
+0.16)`, which is exactly why I believed the mechanism worked - but you can never
+get one in by hand.
+
+So the evidence I cited as proof was the same evidence that should have made me
+suspicious: a negative that was already there, which he had not typed.
+
+Every vector entry is now three floats with signed `AcceptableValueRange`s. A
+ranged float gets a slider, and a slider has no keystrokes to lose. Twenty float
+keys replace seven vector keys, which is more config than before and worth it.
+
+`tests/ConfigKeyTests.cs` gained two checks: no config entry may be a vector type,
+and every dial labelled `(m)` or `(deg)` must have a range reaching below zero.
+The second one immediately found `Yaw write probe amount (deg)` clamped to 1..90,
+which is a direction test that could only be run in one direction. Three keys are
+exempt and named in the test rather than silently skipped - cone size, hard cap
+and max focus distance are radii and distances, where a negative is not a mirrored
+value but nothing at all.
+
+### The sniper scope, and one switch doing two jobs
+
+Same message: *"when looking into a rifle with a sniper scope, it jumps into
+zooming my fov right away."*
+
+Back to `OnAimOrPoseChanged`:
+
+```csharp
+float fov = !IsAiming              ? HeadBobbing
+          : CurrentScope.IsOptic   ? 35f
+                                   : HeadBobbing - 15f;
+```
+
+Two branches, two completely different physical things, and from inside `SetFov`
+they are indistinguishable - both arrive as one float smaller than the base FOV.
+
+- `HeadBobbing - 15` is the **shouldering lean**. Cancelling it is the entire
+  point of "keep your field of view when aiming".
+- `35` is the **magnification**. Cancelling it takes the zoom off a sniper scope.
+
+I cancelled both, so a 10x scope stopped being a 10x scope. The prefix now asks
+`SightNBone.IsOptic` and leaves optics alone unless a second switch says
+otherwise, which defaults off.
+
+### The lesson worth keeping
+
+**"Is it permitted?" and "can the user actually do it?" are different questions,
+and only the second one matters.** Reading the binding and reporting the range was
+answering a question nobody asked. The check that would have caught it is trying
+to type the value.
+
+That is the same shape as F34 and F36 one level up the stack: an API call that
+succeeds is not an API call that did something, and a config range that permits a
+value is not a config field that accepts one.
+
+---
+
+## F40. The legacy hinge cannot hinge, and that is arithmetic
+
+*"Not sure how to explain you even more but my gun is not rotating on horizontal
+plate enough around the handgrip."*
+
+Fifth time. He has been describing the same thing since the 5-DOF message and
+every previous round I answered it as a tuning problem - find the right pivot,
+guess the bore axis (F20), read the weapon's own centre (F38). All of those set
+**where** the hinge is. None of them touched **whether there is a hinge at all**,
+and there was not.
+
+Here is `TransformTools.LocalRotateAround`, decompiled from the IL rather than
+inferred:
+
+```csharp
+static void LocalRotateAround(Transform t, Vector3 c, Vector3 euler)
+{
+    Quaternion q = Quaternion.Euler(
+        t.InverseTransformDirection(t.parent.TransformDirection(euler)));
+
+    t.localPosition = t.localPosition + (R * c) - (q * c);   // R = t.localRotation
+    t.localRotation = R * q;
+}
+```
+
+A rotation of a rigid body about the local point `c` moves the origin by
+
+```
+    R*c - (R*q)*c  =  R * (I - q) * c
+```
+
+The game writes `R*c - q*c`. The mod calls it twice - once with `c`, once with
+`-c` and no rotation - which cancels the constant part and leaves
+
+```
+    net displacement = (I - q) * c
+```
+
+So there IS a lever arm and it does scale with the rotation. It is simply **in
+the wrong frame**: `(I - q)*c` instead of `R*(I - q)*c`, off by exactly `R`, the
+weapon's own local rotation. Right length, wrong direction.
+
+That is the whole complaint, precisely. A yaw that should have moved the weapon
+horizontally moves it along some rotated axis instead, so most of the intended
+horizontal swing leaks into pitch and into the barrel direction. The gun turns,
+but it does not turn *about the hand*, and it never will - because the pivot dial
+sets `c`, and `c` is not the part that is wrong.
+
+F22 had already read this method and concluded the AXES were reinterpreted. True,
+and it stopped one line early: the position line is broken too, and that is the
+line that decides whether a hinge exists.
+
+### The fix was written months ago
+
+`HingeMode.AroundGrip` has always done the honest thing:
+
+```csharp
+root.position = pivot + q * (root.position - pivot);
+root.rotation = q * root.rotation;
+```
+
+That is an exact rigid rotation about a world point. It was built in F22, tested
+against the wrong problem, blamed during the F20-F23 mess, and left as a non-
+default while I went back to tuning `c` on a call that cannot use it.
+
+It now takes its pivot from the weapon's own rotation centre when
+`PivotFromWeapon` is on - `root.TransformPoint(centre)`, exactly the way
+`ApplyComplexRotation` places it, since `root` here IS `WeaponRootAnim`.
+
+### Make the invisible thing visible
+
+The HUD prints `lever <n> m` in AROUND GRIP mode: the distance from the weapon
+root to the hinge. That single number is the difference between hinging and
+spinning about your own origin, and there was no way to see it before. The legacy
+row is now marked in red as unable to hinge, rather than merely "reinterprets the
+axes".
+
+### The lesson worth keeping
+
+**When someone repeats the same complaint after each fix, the fix is addressing
+the wrong variable.** Four rounds of moving the pivot, when the question that
+mattered was whether moving the pivot could do anything at all. One decompile of
+the method being called - which F22 had already opened - would have answered it
+at any point.
+
+The tell was in his words the whole time: not "the pivot is in the wrong place"
+but "it is not rotating around the handgrip". He was describing an absent hinge,
+and I kept hearing a misplaced one.

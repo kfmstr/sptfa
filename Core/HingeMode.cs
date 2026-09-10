@@ -33,6 +33,13 @@ namespace SPTFreeAim.Core
         /// to be oriented relative to its parent, and a component of the mouse
         /// movement can land along the barrel, where it rolls the gun instead of
         /// aiming it. Inherited from lualeet and never read until F22.
+        ///
+        /// WORSE, and only proved in F40: it cannot rotate about a point at all.
+        /// It displaces by (I - q)*c where a true rotation about c needs
+        /// R*(I - q)*c. The lever arm is the right LENGTH and the wrong
+        /// DIRECTION - it comes out in the parent's frame instead of the
+        /// weapon's - so a horizontal swing leaks into pitch and into the barrel
+        /// axis, and no pivot dial can fix it. Use AroundGrip for a hinge.
         /// </summary>
         LegacyEuler = 1
     }

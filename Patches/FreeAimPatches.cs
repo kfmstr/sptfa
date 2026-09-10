@@ -119,6 +119,17 @@ namespace SPTFreeAim.Patches
 
             _gameAimFov = x;
 
+            // An optic is a different animal. The game hands it a flat 35 degrees
+            // - that IS the magnification - where irons and red dots get
+            // HeadBobbing minus fifteen, which is only the shouldering lean.
+            // Cancelling both with one switch takes the zoom off a sniper scope,
+            // which is not what anyone wants. F39.
+            if (GameRefs.IsCurrentScopeOptic(LocalPwa) && !cfg.KeepFovWithOptics.Value)
+            {
+                AimFovState = "optic - magnification left alone";
+                return true;
+            }
+
             if (WantZoom(cfg))
             {
                 AimFovState = "zoomed (breath)";
@@ -304,7 +315,7 @@ namespace SPTFreeAim.Patches
                 float rYaw = st.RecoilRaw.y;
                 float rPitch = st.RecoilRaw.x;
                 if (cfg.RecoilSwapAxes.Value) { float t = rYaw; rYaw = rPitch; rPitch = t; }
-                Vector2 scale = cfg.RecoilGunScale.Value;
+                Vector2 scale = cfg.RecoilGunScale;
                 st.RecoilOffset = new Vector2(rYaw * scale.x, rPitch * scale.y);
             }
             else st.RecoilOffset = Vector2.zero;
@@ -445,7 +456,7 @@ namespace SPTFreeAim.Patches
             // builds had and what -0.15 was measured against: it put the hinge on
             // the pistol grip. The Vector3 below is a fine offset on top, zero by
             // default, for nudging off that line.
-            Vector3 pivot = Vector3.up * cfg.PivotDistance.Value + cfg.PivotFineOffset.Value;
+            Vector3 pivot = Vector3.up * cfg.PivotDistance.Value + cfg.PivotFineOffset;
 
             // Or let the weapon say where it turns.
             //
@@ -461,7 +472,7 @@ namespace SPTFreeAim.Patches
             Vector3 gameCentre;
             if (cfg.PivotFromWeapon.Value &&
                 GameRefs.GetRotationCentre(pwa, cfg.PivotStockWeight.Value, out gameCentre))
-                pivot = gameCentre + cfg.PivotFineOffset.Value;
+                pivot = gameCentre + cfg.PivotFineOffset;
 
             LastPivotLocal = pivot;
 
@@ -587,9 +598,24 @@ namespace SPTFreeAim.Patches
                 return;
             }
 
-            // The grip, as a point in the world: offset from the camera in its own
-            // right / up / forward axes, in metres.
-            Vector3 pivot = cam.TransformPoint(cfg.GripFromEye.Value);
+            // The grip, as a point in the world.
+            //
+            // Two ways to get one. The weapon's own rotation centre is the better
+            // one - measured, per weapon, and placed exactly the way the game
+            // places it in ApplyComplexRotation:
+            //
+            //     world = HandsContainer.WeaponRootAnim.TransformPoint(centre)
+            //
+            // and `root` here IS WeaponRootAnim. The camera-relative grip point is
+            // the fallback, for when the weapon does not carry a centre or you
+            // want to place the hand yourself.
+            Vector3 centre;
+            Vector3 pivot;
+            if (cfg.PivotFromWeapon.Value &&
+                GameRefs.GetRotationCentre(pwa, cfg.PivotStockWeight.Value, out centre))
+                pivot = root.TransformPoint(centre + cfg.PivotFineOffset);
+            else
+                pivot = cam.TransformPoint(cfg.GripFromEye);
 
             // Yaw about the world vertical, pitch about the camera's right. Using
             // the camera's right rather than the world X keeps pitch square to
@@ -600,6 +626,19 @@ namespace SPTFreeAim.Patches
             // A rigid body turned about a point: rotate the position around it,
             // and rotate the orientation by the same amount. Nothing else - no
             // second cancelling call, because nothing was displaced.
+            // A rigid body turned about a point: rotate the position around it and
+            // rotate the orientation by the same amount. This is the whole reason
+            // to be in this mode - it is an exact rotation about `pivot`, so the
+            // muzzle swings one way and the buttstock swings the other, by the
+            // lever arm each side of the hand.
+            //
+            // The legacy hinge cannot do this. TransformTools.LocalRotateAround
+            // displaces by (I - q)*c where a rotation about c needs R*(I - q)*c,
+            // so its lever arm comes out in the parent's frame rather than the
+            // weapon's - right length, wrong direction, and the horizontal swing
+            // leaks into pitch and into the barrel axis. F40.
+            LastLever = Vector3.Distance(root.position, pivot);
+
             root.position = pivot + q * (root.position - pivot);
             root.rotation = q * root.rotation;
 
@@ -674,6 +713,14 @@ namespace SPTFreeAim.Patches
         /// <summary>Last local pivot used by the legacy hinge, for the HUD.</summary>
         public static Vector3 LastPivotLocal;
 
+        /// <summary>
+        /// Distance from the weapon root to the hinge, in metres. This is the
+        /// lever arm, and it is the number that decides how far the weapon
+        /// actually swings - zero here means it is spinning about its own origin
+        /// no matter what the pivot dials say.
+        /// </summary>
+        public static float LastLever;
+
         private static bool _warnedPoseRot;
         private static void WarnPoseRotationSuppressed()
         {
@@ -725,8 +772,8 @@ namespace SPTFreeAim.Patches
             bool down = !p.Stance.WeaponReady;
             float speed = p.Cfg.LoweredLerpSpeed.Value * dt;
 
-            _loweredPos = Vector3.Lerp(_loweredPos, down ? p.Cfg.LoweredPos.Value : Vector3.zero, speed);
-            _loweredRot = Vector3.Lerp(_loweredRot, down ? p.Cfg.LoweredRot.Value : Vector3.zero, speed);
+            _loweredPos = Vector3.Lerp(_loweredPos, down ? p.Cfg.LoweredPos : Vector3.zero, speed);
+            _loweredRot = Vector3.Lerp(_loweredRot, down ? p.Cfg.LoweredRot : Vector3.zero, speed);
 
             root.localPosition += _loweredPos;
 
@@ -766,8 +813,8 @@ namespace SPTFreeAim.Patches
             float weight = p.State.Gate * (1f - p.State.AimBlend);
             float speed = p.Cfg.LoweredLerpSpeed.Value * dt;
 
-            _readyPos = Vector3.Lerp(_readyPos, p.Cfg.ReadyPos.Value * weight, speed);
-            _readyRot = Vector3.Lerp(_readyRot, p.Cfg.ReadyRot.Value * weight, speed);
+            _readyPos = Vector3.Lerp(_readyPos, p.Cfg.ReadyPos * weight, speed);
+            _readyRot = Vector3.Lerp(_readyRot, p.Cfg.ReadyRot * weight, speed);
 
             root.localPosition += _readyPos;
 
