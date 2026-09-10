@@ -2754,3 +2754,303 @@ at any point.
 The tell was in his words the whole time: not "the pivot is in the wrong place"
 but "it is not rotating around the handgrip". He was describing an absent hinge,
 and I kept hearing a misplaced one.
+
+---
+
+## F41. The counterbalance, and one swing number for two reactions
+
+*"when you turn left or right while aiming, the body is kind leaning to the
+opposite direction and the gun is leaning as well"*
+
+Read as a bug report this says nothing is wrong. It is a description of what
+should be there: the counterbalance. Throw a rifle to the right and the mass goes
+right while the spine goes left, because the weight has to stay over the feet. On
+a bodycam it shows up as the horizon tipping through every turn, and it is most
+of what separates that footage from a camera on a tripod.
+
+### Two reactions, one movement
+
+The wrist cant (F37) and this lean are not independent effects. They are two
+things a body does in response to one swing, and if each computed its own idea of
+"how hard am I swinging" they would eventually disagree about when the swing
+started - one leaning while the other had not begun.
+
+So `SwingFraction` came out of `ApplyGunRoll` and is now shared:
+
+```csharp
+dead = cone * (1 - aimBlend)
+t    = clamp01((|yaw| - dead) / (cap - dead)) * sign(yaw)
+```
+
+Both effects read it, both inherit the cone deadband and its fade with aim, and
+both settle on the same spring the offset already uses. No new timing anywhere.
+
+### Applied in two places, computed in one
+
+The camera and the weapon sit under different `TransformGuard`s, and a guard only
+covers what is written between its own BeginFrame and EndFrame. So the lean is
+computed once before either guard opens and written twice inside them -
+`ApplyLeanToCamera` in the camera block, `ApplyLeanToWeapon` in the weapon block.
+
+Splitting it that way also fixed a bug that had not happened yet: `doCamera` was
+previously `Compensate mode && ApplyCameraOffset`, so in Intercept mode - the
+default - the camera guard is never opened. A camera roll written there would
+have compounded every frame and put the horizon on its head in about a second.
+`doCamera` is now `doCompensate || doLean`.
+
+### The weapon might already be leaning
+
+`ApplyLeanToWeapon` checks `anim.IsChildOf(cam)` and skips itself if true: when
+the weapon hangs off the camera in the hierarchy, Unity has already carried it and
+applying the lean again doubles the angle.
+
+Checked rather than assumed. The parentage in this rig has been wrong twice
+already - F23 (WeaponRootAnim IS under WeaponRoot, so pose rotations re-aim every
+offset) and F33 (the "sight bone" is an empty camera node). It costs one call to
+ask.
+
+The weapon leans about the CAMERA's position rather than its own origin, because
+a leaning body swings everything it carries about the spine, and the eye is the
+closest thing to that axis this rig exposes.
+
+### Numbers
+
+Aimed 4 degrees at the hard cap, low ready 1.5. Both deliberately small: it is
+the horizon, and the eye notices a tilted horizon far more readily than it
+notices a tilted gun. Ten degrees is not a shooter bracing, it is a shooter
+falling over.
+
+Off by default with an invert switch, like every mechanic since F20. Which screen
+direction opposes a right-hand swing depends on the camera's handedness, and
+reasoning about that from first principles has a poor record here (F24, F37) -
+the instruction is to look at it.
+
+### The lesson worth keeping
+
+A request phrased as an observation is still a request. "The body is kind leaning"
+described something absent, not something broken, and the useful move was to ask
+which - rather than to go hunting for the bug that was producing it.
+
+---
+
+## F42. One bad frame should not end the session
+
+*"Why when I switch to pistol the free aim stops working and I need to enable it
+again"*
+
+His words match one line of the mod exactly:
+
+```
+SPT Free Aim disabled for this session. Press the master toggle (F8) twice to
+clear it and retry - no need to restart the raid.
+```
+
+That is `EmergencyDisable`, and the path to it was:
+
+```csharp
+try { Frame(__instance); }
+catch (Exception e)
+{
+    Plugin.Log.LogError("Free aim frame failed, disabling to avoid log spam: " + e);
+    Plugin.Instance.EmergencyDisable();     // <- on the FIRST exception, ever
+}
+```
+
+**One** exception, on **one** frame, killed free aim for the rest of the raid.
+
+### Why a weapon swap is the frame that fails
+
+Swapping weapons tears the old weapon's rig down and builds a new one. For a
+frame or two in the middle, the transforms this mod reads are Unity objects that
+have been Destroyed - and a destroyed Unity object does not read as null when you
+touch a member of it, it **throws**. Add the pwa instance changing under
+`LocalPwa` in the same window and a transient throw is close to expected.
+
+Which is fine. What was not fine was the response.
+
+### The remedy was aimed at the wrong problem
+
+The old comment says "disabling to avoid log spam", and it is right that an
+exception once a frame floods the log. It picked the wrong lever: it stopped the
+MOD rather than stopping the LOGGING.
+
+Now the first three failures are logged in full, further ones are silent, and the
+mod only gives up after **30 consecutive** failures - about half a second. The
+counter resets on the first frame that succeeds, so a swap every few minutes
+never accumulates toward the limit. A genuine fault still trips it almost
+immediately; a hiccup during a swap costs two frames of offset that nobody can
+see.
+
+There is now a recovery line in the log too, which is the thing that was missing
+most: previously a transient fault and a permanent one looked identical.
+
+### A second way the same frame could ruin things, silently
+
+Found while reading, not reported:
+
+```csharp
+Transform cam = GameRefs.GetCameraTransform(pwa);
+if (cam == null) { ...warn once...; cfg.Hinge.Value = HingeMode.LegacyEuler; return; }
+```
+
+A single frame where the camera transform is unavailable - again, exactly what a
+weapon swap produces - **permanently rewrote the owner's hinge setting**, quietly
+dropping him from AROUND GRIP back onto the hinge that F40 proved cannot hinge.
+He would then be told the gun does not rotate about the grip, and the config would
+show LEGACY EULER as though he had chosen it.
+
+The warning only fires once, so the second occurrence is completely silent.
+
+Now it skips the frame and leaves the config alone.
+
+### The lesson worth keeping
+
+**Error handling has a blast radius, and it should be proportional to the
+evidence.** One exception is evidence of one bad frame. It is not evidence that
+the feature is broken, and it is certainly not grounds to disable a whole mod or
+to overwrite a setting the user chose.
+
+Third time an error handler has done more damage than the error it caught: F29
+repeated the failing write and escalated it into an emergency disable, F31's
+recovery hid a stale build, and now this. The pattern to watch for is a handler
+that changes STATE - disabling, rewriting config, unsubscribing - on evidence
+that is only a single sample.
+
+---
+
+## F43. Prism was there all along, and the reference is glass not glow
+
+*"can we get similar lense glare effect? Is there something like that on unity
+that we can leverage?"*
+
+Yes, and the thing to leverage is not a Unity built-in - it is `PrismEffects`,
+declared in `Assembly-CSharp` and already held by the camera:
+
+```
+CameraManager._prismEffects : PrismEffects
+    stfld  CameraManager.method_2            <- assigned at init
+    ldfld  CameraManager.SetNoise
+    ldfld  CameraManager.EnableAutoExposure
+    ldfld  FlyingBulletSoundPlayer.StartVignetteEffect
+```
+
+The game writes to it itself, for screen noise, auto exposure, and the vignette
+on a near miss. So it is live, it is in the render order, and it takes the same
+approach as F36's depth of field: turn up what is already running rather than
+stacking a pass beside it.
+
+What it carries, all public instance fields:
+
+```
+useBloom, bloomType (Simple|HDR), bloomIntensity, bloomThreshold, bloomBlurPasses
+useLensDirt, lensDirtTexture, dirtIntensity
+useRays, rayTransform, rayWeight, rayColor, rayThreshold
+useChromaticAberration, chromaticIntensity, aberrationType (Vignette|Vertical)
+useExposure, exposureMiddleGrey, exposureSpeed, exposureLowerLimit/UpperLimit
+useVignette, vignetteStart/End/Strength/Color
+```
+
+That is a full lens kit, including auto exposure - which is a large part of why
+bodycam footage reads as a camera, and worth revisiting separately.
+
+### Lens dirt is the setting that matters
+
+Bloom alone reads as a **glow**. Bloom modulated through a dirt texture reads as
+light scattering off a piece of **glass with something on it**, which is what a
+lens does and what the reference shows. `dirtIntensity` is the one dial that
+changes the character rather than the amount.
+
+It also has the failure mode this project keeps meeting: with no
+`lensDirtTexture` assigned, the effect runs, multiplies by nothing, and draws no
+difference - a silent no-op, exactly F34's shape. So `ResolvePrism` checks for the
+texture at resolve time and both the log and the HUD say `(no texture)` when it is
+absent, rather than leaving a dial that cannot move.
+
+### Bloom is a multiplier, not an absolute
+
+`bloomIntensity` is scaled against the captured stock value rather than replaced.
+1.0 is stock Tarkov, 1.6 is the default here. An absolute number would mean
+nothing to anyone and would silently stop matching if BSG retuned theirs - the
+same reasoning that made F38 restore the FOV to `HeadBobbing` rather than adding
+fifteen back.
+
+### What the reference actually shows, and what this does not cover
+
+Watched the frame rather than reasoning from the description. The scope fills the
+view with a green-yellow coating tint across the glass, a bright rim on the lens
+edge, and the image inside noticeably brighter than the world around it.
+
+Prism gets the **full-screen** half of that - the bleed, the fringing, the
+scatter. It cannot do the **per-optic** half: the coating tint and the rim
+highlight live on the lens material, reached through
+`OpticCameraManager.CurrentOpticSight.LensRenderer`, and driving those needs to
+know the lens shader's property names. That is what the `Log the optic lens
+material` diagnostic was added for, and it has never been run.
+
+Two separate mechanisms behind one word, and only one of them is done. Recorded
+here so the other half is not mistaken for a tuning problem later - which is
+precisely the mistake F40 cost five rounds.
+
+### Three things, one word
+
+The owner sent two more frames and named the cues himself: *"there are nice
+circle around the ages, showing that the glass is curved"* and *"there is round
+distortion on the edges of the lense"*.
+
+Looking at those frames rather than reasoning from "glare", the reference is
+**three separate mechanisms** wearing one name:
+
+1. **A bright hotspot on the glass** - a blown highlight in the upper-left of the
+   lens. Full-screen bloom reaches this. Prism does it.
+2. **A ring at the rim, darkening toward the edge** - a vignette INSIDE the scope
+   image, not on the screen.
+3. **Round distortion at the lens edge** - straight lines bowing near the rim. A
+   lens distortion INSIDE the scope image.
+
+Two and three are not screen effects at all. They belong to the optic's own
+camera, which has its own stack:
+
+```
+OpticCameraManager._postProcessVolume : PostProcessVolume
+OpticCameraManager._postProcessLayer  : PostProcessLayer
+```
+
+That is a second, independent PPv2 stack rendering only what you see through the
+tube. If its profile already carries a `LensDistortion` and a `Vignette` - shipped
+and switched off - then both cues are two `enabled = true` writes away. If it does
+not, they need creating, which is a different and much larger job.
+
+**That is asset data.** It cannot be read from the assembly, only from a running
+raid, so `DumpOpticSetupOnce` prints the profile's effect list and every shader
+property on the lens material.
+
+Which is also how this finding avoided repeating F40: three cues, three
+mechanisms, and only one of them was ever going to yield to the thing I had
+already built. Saying so before building the other two is the entire lesson of
+the last five findings.
+
+### Shoulder give
+
+Same message: *"it seems that gun has a bit of the leeway outside of the shoulder
+point"* - which is the owner repeating, from the reference, what he first said in
+the original five-degrees-of-freedom message: *"we can have a bit of the leeway
+when turning"*.
+
+A translation, not a rotation. The hinge stays where the weapon says it is (F38);
+this is give on top. It runs opposite the swing, because the weapon's own mass is
+what loads the pocket, and it scales with the aim blend since a weapon at low
+ready has no pocket to give.
+
+It reuses `SwingFraction` too, so all four swing reactions - cant, lean, give, and
+the offset itself - are driven by one number and cannot drift apart.
+
+### A test gap worth recording
+
+While editing the config, a python edit dropped a `);` and left the file
+syntactically broken. `ConfigKeyTests` passed - before AND after - because it
+reads the file as text and checks naming rules, not compilability.
+
+That is not a flaw in the test, it is the boundary of what a text-scanning test
+can know. It does mean the build is the only thing standing between a bad edit and
+a broken DLL, which is exactly the F31 situation: build every time, and check the
+artefact's size and timestamp rather than trusting that a command ran.

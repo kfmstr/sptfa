@@ -98,6 +98,17 @@ namespace SPTFreeAim
         public ConfigEntry<float> GunRollReady;
         public ConfigEntry<bool> InvertGunRoll;
         public ConfigEntry<bool> GunRollAboutView;
+        public ConfigEntry<float> ShoulderGive;
+        public ConfigEntry<bool> GlareEnabled;
+        public ConfigEntry<float> GlareBloom;
+        public ConfigEntry<float> GlareThreshold;
+        public ConfigEntry<float> GlareDirt;
+        public ConfigEntry<float> GlareChromatic;
+        public ConfigEntry<bool> BodyLeanEnabled;
+        public ConfigEntry<float> BodyLeanAimed;
+        public ConfigEntry<float> BodyLeanReady;
+        public ConfigEntry<bool> InvertBodyLean;
+        public ConfigEntry<bool> GunLeansWithBody;
         public ConfigEntry<float> SightAlpha;
         public ConfigEntry<bool> LogSightMaterials;
         public ConfigEntry<bool> DumpLensMaterial;
@@ -447,6 +458,19 @@ namespace SPTFreeAim
                 "Only does anything when the switch above is on.",
                 new AcceptableValueRange<float>(-2f, 2f)));
 
+            ShoulderGive = cfg.Bind(S_PIVOT, "Shoulder give (m)", 0f, new ConfigDescription(
+                "The shoulder pocket is flesh, not a bolt. Under a hard swing the weapon slides a " +
+                "centimetre or two in the pocket and comes back, instead of being welded in place.\n" +
+                "\n" +
+                "This is a TRANSLATION on top of the hinge, not another rotation - the gun still " +
+                "turns about the point the weapon itself specifies. It runs opposite the swing, " +
+                "because the weapon's own mass is what loads the pocket: swing right and the stock " +
+                "is left behind for a moment.\n" +
+                "\n" +
+                "Scaled by how shouldered you are, since a weapon at low ready has no pocket to " +
+                "give. Try 0.02 - two centimetres. Negative slides it the other way.",
+                new AcceptableValueRange<float>(-0.1f, 0.1f)));
+
             GunRollEnabled = cfg.Bind(S_PIVOT, "Gun rolls as it swings", false,
                 "Cants the weapon while it swings, the way your wrist rolls when the support hand " +
                 "leads the gun around. Turn right and it rolls clockwise; turn left and it rolls " +
@@ -479,6 +503,83 @@ namespace SPTFreeAim
                 "On, it rolls about the axis you are looking down. That one cannot be wrong, but at " +
                 "low ready, with the muzzle at the floor, it reads as a twist rather than a cant. " +
                 "Use it only if the barrel axis turns out to be wrong on some weapon.");
+
+            GlareEnabled = cfg.Bind(S_BODY, "Lens glare", false,
+                "Light scattering off the glass, the way it does on a camera lens or through an " +
+                "optic.\n" +
+                "\n" +
+                "This drives Prism, which Tarkov already runs on the camera - CameraManager holds " +
+                "one and the game writes to it itself for noise, auto exposure and the near-miss " +
+                "vignette. So this is the same move as the gun blur: turn up what is already in the " +
+                "render order rather than stacking another pass on top of it. See F43.\n" +
+                "\n" +
+                "Every value it touches is captured first and handed back when it stops.");
+
+            GlareBloom = cfg.Bind(S_BODY, "Glare: bloom", 1.6f, new ConfigDescription(
+                "A MULTIPLIER on the game's own bloom, so 1.0 is stock Tarkov and the dial means " +
+                "something you can picture. Around 1.5 to 2 gives highlights that bleed the way " +
+                "they do through a lens; past 3 the whole screen starts to haze over.",
+                new AcceptableValueRange<float>(0f, 5f)));
+
+            GlareThreshold = cfg.Bind(S_BODY, "Glare: threshold", 0f, new ConfigDescription(
+                "How bright a pixel must be before it blooms. LOWER means more of the scene glows, " +
+                "which is what a dirty or cheap lens does. Leave at 0 to keep the game's own value " +
+                "- this one is worth changing only after the bloom multiplier is where you want it.",
+                new AcceptableValueRange<float>(0f, 3f)));
+
+            GlareDirt = cfg.Bind(S_BODY, "Glare: lens dirt", 0f, new ConfigDescription(
+                "Modulates the bloom through the lens-dirt texture, which is the difference between " +
+                "a GLOW and light scattering off a piece of glass with something on it. This is the " +
+                "single setting that most makes it read as a lens.\n" +
+                "\n" +
+                "Does nothing if the build ships no dirt texture - the log says which on the first " +
+                "raid, rather than leaving you turning a dial that cannot move.",
+                new AcceptableValueRange<float>(0f, 3f)));
+
+            GlareChromatic = cfg.Bind(S_BODY, "Glare: colour fringing", 0f, new ConfigDescription(
+                "Splits the colour channels toward the edges of the frame - the rainbow edging real " +
+                "glass produces and every bodycam shows. Small numbers only; this is one people " +
+                "notice as a headache long before they notice it as realism.",
+                new AcceptableValueRange<float>(0f, 2f)));
+
+            BodyLeanEnabled = cfg.Bind(S_BODY, "Body leans as you swing", false,
+                "The counterbalance. Swing the weapon right and your torso leans LEFT - the mass " +
+                "goes one way and the spine goes the other to keep the weight over your feet.\n" +
+                "\n" +
+                "On a bodycam this reads as the horizon tipping as the shooter turns, and it is " +
+                "most of what makes that footage feel like a person carrying a rifle rather than a " +
+                "camera on a tripod. It stops when you stop, on the same spring as everything else, " +
+                "so it settles level about a second after you do.\n" +
+                "\n" +
+                "Off by default. Turn it on and swing before touching the numbers.");
+
+            BodyLeanAimed = cfg.Bind(S_BODY, "Body lean aimed (deg)", 4f, new ConfigDescription(
+                "How far the view tips at the hard cap while shouldered. This one wants to be " +
+                "SMALL - a few degrees is a person bracing, ten is a person falling over, and it " +
+                "is the horizon so you notice it far more than you expect.",
+                new AcceptableValueRange<float>(-30f, 30f)));
+
+            BodyLeanReady = cfg.Bind(S_BODY, "Body lean at low ready (deg)", 1.5f, new ConfigDescription(
+                "The same, at low ready, where it only starts once the swing has taken up the " +
+                "slack in your arms. Smaller again: a weapon held loose does not load the spine " +
+                "the way a shouldered one does.",
+                new AcceptableValueRange<float>(-30f, 30f)));
+
+            InvertBodyLean = cfg.Bind(S_BODY, "Invert body lean", false,
+                "If the horizon tips the wrong way. Which screen direction opposes a right-hand " +
+                "swing depends on the camera's handedness, and guessing that from first principles " +
+                "has a poor record here - look at it and flip this if it is backwards.");
+
+            GunLeansWithBody = cfg.Bind(S_BODY, "Gun leans with the body", true,
+                "Carries the weapon along with the lean, about the eye, so the gun stays welded to " +
+                "you instead of hanging level while the horizon tips around it.\n" +
+                "\n" +
+                "Off, only the view leans and the weapon keeps its own attitude - which looks wrong " +
+                "for a rifle in your hands, but is worth a look to see what the lean is doing on " +
+                "its own.\n" +
+                "\n" +
+                "Skipped automatically when the weapon already hangs off the camera in the " +
+                "hierarchy, since Unity would then apply the lean twice.");
 
             DofEnabled = cfg.Bind(S_BODY, "Gun blur: focus past the gun", true,
                 "The gun goes soft while your eyes are downrange - the focused-at-infinity look.\n" +
@@ -555,13 +656,20 @@ namespace SPTFreeAim
                 "This is what makes transparency fixable rather than guessable - it says out loud " +
                 "where EFT keeps its albedo instead of assuming.");
 
-            DumpLensMaterial = cfg.Bind(S_BODY, "Log the optic lens material", false,
-                "DIAGNOSTIC, for the scope glare question. Writes the shader name and every " +
-                "property on the current optic's lens material to the log, once per weapon.\n" +
+            DumpLensMaterial = cfg.Bind(S_BODY, "Log the optic setup", false,
+                "DIAGNOSTIC, and the one thing that would move the scope glass forward.\n" +
                 "\n" +
-                "Nothing in the client assembly exposes a per-optic glare, so whether the old " +
-                "lens-glare effect can be switched back on depends on what that shader still " +
-                "carries. Turn this on, aim down a scope, and send me the log lines.");
+                "The curved-glass look - the ring at the rim, the darkening toward the edge, the " +
+                "bright hotspot on the lens - is not a full-screen effect. It happens inside the " +
+                "scope image, which Tarkov renders with a SEPARATE camera that has its own post " +
+                "stack (OpticCameraManager._postProcessVolume).\n" +
+                "\n" +
+                "Whether that stack already carries a lens distortion, a vignette or a bloom - " +
+                "shipped but switched off - is asset data. It cannot be read out of the assembly, " +
+                "only out of a running raid. This prints it, plus every shader property on the " +
+                "current optic's lens material, once per raid.\n" +
+                "\n" +
+                "Turn it on, load in with a scoped weapon, aim through it once, then send the log.");
 
             KeepFovWhenAiming = cfg.Bind(S_BODY, "Keep your field of view when aiming", false,
                 "Tarkov narrows the view by fifteen degrees the moment the weapon comes up. It is " +

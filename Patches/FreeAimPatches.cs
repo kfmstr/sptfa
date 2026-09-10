@@ -34,6 +34,24 @@ namespace SPTFreeAim.Patches
         private static Harmony _harmony;
         private static bool _warnedNoCamera;
 
+        /// <summary>
+        /// How many frames in a row may fail before the mod gives up on itself.
+        ///
+        /// It used to be one. Swapping to a pistol tears the old weapon down and
+        /// builds a new one, and for a frame or two in the middle the transforms
+        /// this mod reads can be destroyed Unity objects - which throw on access
+        /// rather than reading as null. One such frame killed free aim for the
+        /// whole session and left the owner pressing the master toggle twice to
+        /// get it back (docs/07-FINDINGS.md F42).
+        ///
+        /// A transient failure during a swap is a hiccup. A real fault fails
+        /// every frame and still trips this within half a second. The budget
+        /// resets on the first frame that succeeds, so a swap every few minutes
+        /// never accumulates.
+        /// </summary>
+        private const int FailureBudget = 30;
+        private static int _consecutiveFailures;
+
         public static void Apply(Harmony harmony)
         {
             _harmony = harmony;
@@ -199,6 +217,7 @@ namespace SPTFreeAim.Patches
         {
             FocusDepth.Release();
             OpticHousing.Release();
+            GameRefs.ReleasePrism();
             LocalPlayer = null;
             LocalPwa = null;
             if (_harmony != null) _harmony.UnpatchSelf();
@@ -226,11 +245,33 @@ namespace SPTFreeAim.Patches
             // the weapon wherever our last frame put it.
             if (!Plugin.Active) { ReleaseAll(__instance); return; }
 
-            try { Frame(__instance); }
+            try
+            {
+                Frame(__instance);
+                if (_consecutiveFailures != 0)
+                {
+                    Plugin.Log.LogInfo("Free aim recovered after " + _consecutiveFailures +
+                                       " failed frame(s) - carrying on.");
+                    _consecutiveFailures = 0;
+                }
+            }
             catch (Exception e)
             {
-                Plugin.Log.LogError("Free aim frame failed, disabling to avoid log spam: " + e);
-                Plugin.Instance.EmergencyDisable();
+                _consecutiveFailures++;
+
+                // Log the first few in full, then go quiet. The old handler was
+                // right that an exception once a frame floods the log; it was
+                // wrong about the remedy.
+                if (_consecutiveFailures <= 3)
+                    Plugin.Log.LogError("Free aim frame failed (" + _consecutiveFailures + " of " +
+                                        FailureBudget + " before giving up):\n" + e);
+
+                if (_consecutiveFailures >= FailureBudget)
+                {
+                    Plugin.Log.LogError("Free aim has failed " + FailureBudget +
+                                        " frames in a row. This is not a hiccup.");
+                    Plugin.Instance.EmergencyDisable();
+                }
             }
         }
 
@@ -291,6 +332,19 @@ namespace SPTFreeAim.Patches
                 FocusDepth.Release();
             }
 
+            // The diagnostic that was never wired up. One raid with this on tells
+            // us what the optic's own post stack already carries, which is the
+            // only way to know - it is asset data, not code. F43.
+            if (cfg.DumpLensMaterial.Value) GameRefs.DumpOpticSetupOnce();
+
+            try { ApplyLensGlare(cfg); }
+            catch (Exception e)
+            {
+                Plugin.Log.LogError("Lens glare failed, switching it off: " + e);
+                cfg.GlareEnabled.Value = false;
+                GameRefs.ReleasePrism();
+            }
+
             try { ApplySightTransparency(p, pwa, cfg); }
             catch (Exception e)
             {
@@ -345,7 +399,11 @@ namespace SPTFreeAim.Patches
             Transform cameraTransform = GameRefs.GetCameraTransform(pwa);
             Transform weaponRoot = GameRefs.GetWeaponRoot(pwa);
 
-            bool doCamera = tuning.Mode == DriveMode.Compensate && cfg.ApplyCameraOffset.Value;
+            ComputeBodyLean(applied.x, st.AimBlend, cfg);
+
+            bool doCompensate = tuning.Mode == DriveMode.Compensate && cfg.ApplyCameraOffset.Value;
+            bool doLean = cfg.BodyLeanEnabled.Value;
+            bool doCamera = doCompensate || doLean;
             bool doWeapon = cfg.ApplyWeaponOffset.Value;
             bool doPose = cfg.LoweredPoseEnabled.Value && cfg.StanceGateEnabled.Value;
 
@@ -354,11 +412,18 @@ namespace SPTFreeAim.Patches
             if (doWeapon) GuardWeapon.BeginFrame(weaponRootAnim); else GuardWeapon.Release(weaponRootAnim);
             if (doPose) GuardPose.BeginFrame(weaponRoot); else GuardPose.Release(weaponRoot);
 
-            if (doCamera) { ApplyCameraOffset(pwa, -applied); GuardCamera.EndFrame(cameraTransform); }
+            if (doCamera)
+            {
+                if (doCompensate) ApplyCameraOffset(pwa, -applied);
+                if (doLean) ApplyLeanToCamera(pwa);
+                GuardCamera.EndFrame(cameraTransform);
+            }
             if (doWeapon)
             {
                 ApplyWeaponOffset(pwa, applied, cfg);
                 ApplyGunRoll(pwa, weaponRootAnim, applied.x, st.AimBlend, cfg);
+                if (doLean && cfg.GunLeansWithBody.Value) ApplyLeanToWeapon(pwa, weaponRootAnim);
+                ApplyShoulderGive(pwa, weaponRootAnim, applied.x, st.AimBlend, cfg);
                 GuardWeapon.EndFrame(weaponRootAnim);
             }
             if (doPose) { ApplyLoweredPose(pwa, p, dt); ApplyReadyPose(pwa, p, dt); GuardPose.EndFrame(weaponRoot); }
@@ -485,6 +550,137 @@ namespace SPTFreeAim.Patches
         }
 
         /// <summary>
+        /// How hard the weapon is being swung, as a signed 0..1.
+        ///
+        /// Shared by the wrist cant and the body lean so the two cannot drift out
+        /// of step - they are two reactions to one movement, and if they were
+        /// computed separately they would eventually disagree about when the
+        /// movement started.
+        ///
+        ///     dead = cone * (1 - aimBlend)
+        ///     t    = clamp01((|yaw| - dead) / (cap - dead)) * sign(yaw)
+        ///
+        /// The deadband is the cone, fading out as the weapon comes up: braced
+        /// against the shoulder there is no slack and everything reacts at once;
+        /// at low ready the slack has to be taken up first. F37.
+        /// </summary>
+        private static float SwingFraction(float yawOffset, float blend, FreeAimConfig cfg)
+        {
+            float cone = Mathf.Abs(cfg.ConeDegrees.Value);
+            float cap = Mathf.Abs(cfg.CapDegrees.Value);
+
+            float dead = cone * (1f - Mathf.Clamp01(blend));
+            float span = Mathf.Max(cap - dead, 1f);
+
+            float mag = Mathf.Max(0f, Mathf.Abs(yawOffset) - dead);
+            return Mathf.Clamp01(mag / span) * Mathf.Sign(yawOffset);
+        }
+
+        /// <summary>Last body lean applied, in degrees, for the HUD.</summary>
+        public static float LastLean;
+
+        /// <summary>Last shoulder slide, in metres, for the HUD.</summary>
+        public static float LastGive;
+
+        /// <summary>
+        /// The shoulder pocket is flesh, not a bolt.
+        ///
+        /// The owner said this in the original five-degrees-of-freedom message -
+        /// "the buttstock and right hand almost not moving (we can have a bit of
+        /// the leeway when turning)" - and again looking at the reference: the
+        /// weapon is not welded in place while shouldered, it slides a centimetre
+        /// or two under a hard swing and comes back.
+        ///
+        /// Translation, not rotation: the hinge stays where the weapon says it is
+        /// (F38), and this is the give ON TOP of it. It runs opposite the swing,
+        /// because the weapon's own mass is what loads the pocket - swing right,
+        /// the stock is left behind for a moment.
+        ///
+        /// Scaled by the aim blend, since a weapon that is not in the shoulder has
+        /// no pocket to give.
+        /// </summary>
+        private static void ApplyShoulderGive(ProceduralWeaponAnimation pwa, Transform anim,
+                                              float yawOffset, float aimBlend, FreeAimConfig cfg)
+        {
+            LastGive = 0f;
+            if (Mathf.Abs(cfg.ShoulderGive.Value) < 0.0001f || anim == null) return;
+
+            float blend = Mathf.Clamp01(aimBlend);
+            float t = SwingFraction(yawOffset, blend, cfg);
+
+            float give = -t * cfg.ShoulderGive.Value * blend;
+            LastGive = give;
+            if (Mathf.Abs(give) < 0.0002f) return;
+
+            Transform cam = GameRefs.GetCameraTransform(pwa);
+            Vector3 axis = cam == null ? anim.right : cam.right;
+            anim.position += axis * give;
+        }
+
+        /// <summary>
+        /// The counterbalance: swing the weapon right and the torso leans LEFT.
+        ///
+        /// This is what a body does when it throws a rifle around - the mass goes
+        /// one way and the spine goes the other to keep the weight over the feet.
+        /// On a bodycam it reads as the horizon tipping as the shooter turns, and
+        /// it is most of what makes that footage feel like a person rather than a
+        /// tripod.
+        ///
+        /// Computed once here and applied in two places, because the camera and
+        /// the weapon live under different guards. Nothing is written yet.
+        /// </summary>
+        private static void ComputeBodyLean(float yawOffset, float aimBlend, FreeAimConfig cfg)
+        {
+            if (!cfg.BodyLeanEnabled.Value) { LastLean = 0f; return; }
+
+            float blend = Mathf.Clamp01(aimBlend);
+            float t = SwingFraction(yawOffset, blend, cfg);
+            float degrees = Mathf.Lerp(cfg.BodyLeanReady.Value, cfg.BodyLeanAimed.Value, blend);
+
+            // Negated: the lean opposes the swing. Which screen direction that is
+            // depends on the camera's handedness, so there is an invert switch and
+            // the honest instruction is to look rather than to reason about it.
+            float lean = -t * degrees;
+            if (cfg.InvertBodyLean.Value) lean = -lean;
+
+            LastLean = lean;
+        }
+
+        /// <summary>Roll the view. Inside GuardCamera.</summary>
+        private static void ApplyLeanToCamera(ProceduralWeaponAnimation pwa)
+        {
+            if (Mathf.Abs(LastLean) < 0.01f) return;
+            Transform cam = GameRefs.GetCameraTransform(pwa);
+            if (cam == null) return;
+
+            // Local Z is the camera's forward, so this is a roll and nothing else.
+            cam.localRotation = cam.localRotation * Quaternion.Euler(0f, 0f, LastLean);
+        }
+
+        /// <summary>
+        /// Carry the weapon with the lean, so the gun stays welded to the body
+        /// instead of hanging level while the horizon tips.
+        ///
+        /// Skipped when the weapon already descends from the camera transform -
+        /// then Unity has carried it for us and doing it again would double the
+        /// angle. Checked rather than assumed, because the parentage in this rig
+        /// has already been wrong twice (F23, F33). Inside GuardWeapon.
+        /// </summary>
+        private static void ApplyLeanToWeapon(ProceduralWeaponAnimation pwa, Transform anim)
+        {
+            if (Mathf.Abs(LastLean) < 0.01f || anim == null) return;
+            Transform cam = GameRefs.GetCameraTransform(pwa);
+            if (cam == null || anim.IsChildOf(cam)) return;
+
+            // About the eye, not about the weapon's own origin: a body leaning
+            // swings everything it is carrying about the spine, and the eye is the
+            // closest thing to that axis we have.
+            Quaternion q = Quaternion.AngleAxis(LastLean, cam.forward);
+            anim.position = cam.position + q * (anim.position - cam.position);
+            anim.rotation = q * anim.rotation;
+        }
+
+        /// <summary>
         /// Cant the weapon as it swings - the wrist rolling as the support hand
         /// leads the gun around.
         ///
@@ -513,16 +709,8 @@ namespace SPTFreeAim.Patches
         {
             if (!cfg.GunRollEnabled.Value || root == null) return;
 
-            float cone = Mathf.Abs(cfg.ConeDegrees.Value);
-            float cap = Mathf.Abs(cfg.CapDegrees.Value);
             float blend = Mathf.Clamp01(aimBlend);
-
-            float dead = cone * (1f - blend);
-            float span = Mathf.Max(cap - dead, 1f);
-
-            float mag = Mathf.Max(0f, Mathf.Abs(yawOffset) - dead);
-            float t = Mathf.Clamp01(mag / span) * Mathf.Sign(yawOffset);
-
+            float t = SwingFraction(yawOffset, blend, cfg);
             float degrees = Mathf.Lerp(cfg.GunRollReady.Value, cfg.GunRollAimed.Value, blend);
             float roll = t * degrees;
             if (cfg.InvertGunRoll.Value) roll = -roll;
@@ -590,11 +778,17 @@ namespace SPTFreeAim.Patches
                 if (!_warnedNoCamera)
                 {
                     _warnedNoCamera = true;
-                    Plugin.Log.LogError(
-                        "HandsContainer.CameraTransform not found, so the grip pivot cannot be " +
-                        "placed. Falling back to the legacy rotation. See docs/08-RECON.md.");
+                    Plugin.Log.LogWarning(
+                        "HandsContainer.CameraTransform not available this frame, so the grip pivot " +
+                        "cannot be placed. Skipping the offset for this frame only.");
                 }
-                cfg.Hinge.Value = HingeMode.LegacyEuler;
+
+                // Deliberately NOT writing cfg.Hinge here. It used to, and that
+                // turned a single missing frame - which is exactly what happens
+                // while a weapon swap tears the old rig down - into a permanent,
+                // silent change to the owner's setting, dropping him back onto
+                // the hinge that cannot hinge (F40, F42). A transient miss earns
+                // a skipped frame, not a rewritten config.
                 return;
             }
 
@@ -687,6 +881,30 @@ namespace SPTFreeAim.Patches
         /// the raid and into the next one.
         /// </summary>
 
+
+        private static bool _glareDriving;
+
+        /// <summary>
+        /// Turn up the lens scattering the game already has.
+        ///
+        /// Not gated on aiming: a lens scatters light whether or not you are
+        /// looking through a sight, and gating it would make the whole screen
+        /// change character every time the weapon comes up.
+        /// </summary>
+        private static void ApplyLensGlare(FreeAimConfig cfg)
+        {
+            if (!cfg.GlareEnabled.Value)
+            {
+                if (_glareDriving) { _glareDriving = false; GameRefs.ReleasePrism(); }
+                return;
+            }
+
+            if (!GameRefs.HavePrism && !GameRefs.ResolvePrism()) return;
+
+            _glareDriving = true;
+            GameRefs.DrivePrism(cfg.GlareBloom.Value, cfg.GlareThreshold.Value,
+                                cfg.GlareDirt.Value, cfg.GlareChromatic.Value);
+        }
 
         /// <summary>
         /// Fade the optic's body while aiming. Cheap when off: the sight bone

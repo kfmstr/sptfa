@@ -1,4 +1,6 @@
 using System;
+using System.Text;
+using System.Collections.Generic;
 using System.Linq;
 using System.Reflection;
 using UnityEngine;
@@ -1034,6 +1036,286 @@ namespace SPTFreeAim.Compat
             centre = Vector3.LerpUnclamped(hands, stock, stockWeight);
             LastRotationCentre = centre;
             return true;
+        }
+
+        // ============ Diagnostic: what the optic actually has ============
+        //
+        // The curved-glass look in the reference - the rim ring, the darkening
+        // toward the edge, the bright hotspot on the glass - is NOT a full-screen
+        // effect. It lives inside the scope image, and the scope image is rendered
+        // by its own camera with its own post stack:
+        //
+        //     OpticCameraManager._postProcessVolume : PostProcessVolume
+        //     OpticCameraManager._postProcessLayer  : PostProcessLayer
+        //     OpticCameraManager.CurrentOpticSight.LensRenderer : Renderer
+        //
+        // Whether that volume's profile already carries a LensDistortion, a
+        // Bloom, a Vignette or a ChromaticAberration - shipped but switched off -
+        // is asset data. It cannot be read from the assembly, only from a running
+        // raid. So this prints it instead of guessing, which is the whole lesson
+        // of F34 and F43.
+        //
+        // Note the old DumpLensMaterialOnce was never called from anywhere. It sat
+        // in the codebase looking like a working diagnostic for several rounds.
+
+        private static bool _opticDumped;
+
+        public static void DumpOpticSetupOnce()
+        {
+            if (_opticDumped) return;
+
+            try
+            {
+                Assembly asmCSharp = AppDomain.CurrentDomain.GetAssemblies()
+                    .FirstOrDefault(a => a.GetName().Name == "Assembly-CSharp");
+                if (asmCSharp == null) return;
+
+                Type camMgr = asmCSharp.GetType("EFT.CameraControl.CameraManager", false);
+                if (camMgr == null) return;
+
+                PropertyInfo instProp = camMgr.GetProperty("Instance",
+                    BindingFlags.Static | BindingFlags.Public | BindingFlags.NonPublic);
+                object inst = instProp == null ? null : instProp.GetValue(null, null);
+                if (inst == null) return;
+
+                PropertyInfo pOcm = camMgr.GetProperty("OpticCameraManager",
+                    BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
+                object ocm = pOcm == null ? null : pOcm.GetValue(inst, null);
+                if (ocm == null) return;
+
+                Type tOcm = ocm.GetType();
+                var sb = new StringBuilder();
+                sb.AppendLine("=== OPTIC SETUP DUMP (docs/07-FINDINGS.md F43) ===");
+
+                // ---- the optic's own post-process volume ----
+                FieldInfo fVol = tOcm.GetField("_postProcessVolume",
+                    BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
+                object vol = fVol == null ? null : fVol.GetValue(ocm);
+                sb.AppendLine("optic post volume: " + (vol == null ? "NULL" : vol.GetType().FullName));
+
+                if (vol != null)
+                {
+                    object profile = GetMemberValue(vol, "profile") ?? GetMemberValue(vol, "sharedProfile");
+                    sb.AppendLine("  profile: " + (profile == null ? "NULL" : profile.ToString()));
+
+                    object settings = profile == null ? null : GetMemberValue(profile, "settings");
+                    var list = settings as System.Collections.IEnumerable;
+                    if (list == null) sb.AppendLine("  settings: none readable");
+                    else
+                        foreach (object eff in list)
+                        {
+                            if (eff == null) continue;
+                            object en = GetMemberValue(eff, "enabled");
+                            object enVal = en == null ? null : GetMemberValue(en, "value");
+                            sb.AppendLine("    EFFECT " + eff.GetType().Name + "   enabled=" +
+                                          (enVal == null ? "?" : enVal.ToString()));
+                        }
+                }
+
+                // ---- the lens itself ----
+                PropertyInfo pSight = tOcm.GetProperty("CurrentOpticSight",
+                    BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
+                object sight = pSight == null ? null : pSight.GetValue(ocm, null);
+                sb.AppendLine("current optic sight: " + (sight == null ? "NONE FITTED" : sight.ToString()));
+
+                if (sight != null)
+                {
+                    FieldInfo fLens = sight.GetType().GetField("LensRenderer",
+                        BindingFlags.Instance | BindingFlags.Public);
+                    Renderer lens = fLens == null ? null : fLens.GetValue(sight) as Renderer;
+                    sb.AppendLine("  lens renderer: " + (lens == null ? "NULL" : lens.name));
+
+                    if (lens != null)
+                        foreach (Material mat in lens.sharedMaterials)
+                        {
+                            if (mat == null) continue;
+                            Shader sh = mat.shader;
+                            sb.AppendLine("    MATERIAL " + mat.name + "   shader " +
+                                          (sh == null ? "NULL" : sh.name));
+                            if (sh == null) continue;
+
+                            int n = sh.GetPropertyCount();
+                            for (int i = 0; i < n; i++)
+                                sb.AppendLine("        " + sh.GetPropertyType(i) + "  " + sh.GetPropertyName(i));
+                        }
+                }
+
+                _opticDumped = true;
+                Plugin.Log.LogInfo(sb.ToString());
+            }
+            catch (Exception e)
+            {
+                _opticDumped = true;
+                Plugin.Log.LogWarning("Optic setup dump failed: " + e.Message);
+            }
+        }
+
+        private static object GetMemberValue(object target, string name)
+        {
+            if (target == null) return null;
+            Type t = target.GetType();
+            PropertyInfo p = t.GetProperty(name, BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
+            if (p != null) { try { return p.GetValue(target, null); } catch { } }
+            FieldInfo f = t.GetField(name, BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
+            if (f != null) { try { return f.GetValue(target); } catch { } }
+            return null;
+        }
+
+        // ================= Lens glare (Prism) ============================
+        //
+        // Tarkov ships Prism, and CameraManager already holds one:
+        //
+        //     CameraManager._prismEffects : PrismEffects
+        //
+        // assigned in method_2 and already written to by the game itself
+        // (SetNoise, EnableAutoExposure, FlyingBulletSoundPlayer's vignette). So
+        // this is the same shape as the depth of field in F36 - drive what is
+        // already in the render order rather than adding a pass beside it. F43.
+        //
+        // What it carries, all public instance fields:
+        //
+        //     useBloom, bloomType, bloomIntensity, bloomThreshold, bloomBlurPasses
+        //     useLensDirt, lensDirtTexture, dirtIntensity
+        //     useRays, rayTransform, rayWeight, rayColor, rayThreshold
+        //     useChromaticAberration, chromaticIntensity, aberrationType
+        //
+        // Lens dirt is the one that matters most. Bloom on its own reads as a
+        // glow; bloom modulated by a dirt texture reads as light scattering off
+        // GLASS, which is what a lens does and what the reference footage shows.
+
+        private static object _prism;
+        private static readonly string[] PrismDriven =
+        {
+            "useBloom", "bloomIntensity", "bloomThreshold",
+            "useLensDirt", "dirtIntensity",
+            "useChromaticAberration", "chromaticIntensity"
+        };
+        private static readonly Dictionary<string, FieldInfo> _prismFields =
+            new Dictionary<string, FieldInfo>();
+        private static readonly Dictionary<string, object> _prismStock =
+            new Dictionary<string, object>();
+
+        public static bool HavePrism { get { return _prism != null; } }
+        public static string PrismWhyNot = "not resolved yet";
+        public static bool PrismHasDirtTexture;
+
+        public static bool ResolvePrism()
+        {
+            try
+            {
+                Assembly asmCSharp = AppDomain.CurrentDomain.GetAssemblies()
+                    .FirstOrDefault(a => a.GetName().Name == "Assembly-CSharp");
+                if (asmCSharp == null) { PrismWhyNot = "Assembly-CSharp not loaded"; return false; }
+
+                Type camMgr = asmCSharp.GetType("EFT.CameraControl.CameraManager", false);
+                if (camMgr == null) { PrismWhyNot = "CameraManager not found"; return false; }
+
+                PropertyInfo instProp = camMgr.GetProperty("Instance",
+                    BindingFlags.Static | BindingFlags.Public | BindingFlags.NonPublic);
+                object inst = instProp == null ? null : instProp.GetValue(null, null);
+                if (inst == null) { PrismWhyNot = "CameraManager.Instance is null (not in a raid yet)"; return false; }
+
+                FieldInfo fPrism = camMgr.GetField("_prismEffects",
+                    BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
+                if (fPrism == null) { PrismWhyNot = "CameraManager._prismEffects not found"; return false; }
+
+                object prism = fPrism.GetValue(inst);
+                if (prism == null) { PrismWhyNot = "_prismEffects is null on this scene"; return false; }
+
+                Type t = prism.GetType();
+                _prismFields.Clear();
+                _prismStock.Clear();
+
+                foreach (string n in PrismDriven)
+                {
+                    FieldInfo f = t.GetField(n, BindingFlags.Instance | BindingFlags.Public);
+                    if (f == null) continue;
+                    _prismFields[n] = f;
+                    _prismStock[n] = f.GetValue(prism);
+                }
+
+                if (!_prismFields.ContainsKey("bloomIntensity"))
+                {
+                    PrismWhyNot = "PrismEffects has no bloomIntensity - shape changed on " + t.FullName;
+                    return false;
+                }
+
+                // Lens dirt without a texture is a silent no-op: the effect runs,
+                // multiplies by nothing, and draws no difference. Say so rather
+                // than letting the owner turn a dial that cannot move. F34.
+                FieldInfo fTex = t.GetField("lensDirtTexture", BindingFlags.Instance | BindingFlags.Public);
+                PrismHasDirtTexture = fTex != null && fTex.GetValue(prism) != null;
+
+                _prism = prism;
+
+                Plugin.Log.LogInfo(string.Format(
+                    "Lens glare: driving {0}. {1} of {2} fields found, lens dirt texture {3}.",
+                    t.FullName, _prismFields.Count, PrismDriven.Length,
+                    PrismHasDirtTexture ? "PRESENT" : "MISSING - dirt will do nothing"));
+                return true;
+            }
+            catch (Exception e)
+            {
+                PrismWhyNot = e.GetType().Name + ": " + e.Message;
+                return false;
+            }
+        }
+
+        private static void PrismSet(string name, object value)
+        {
+            FieldInfo f;
+            if (_prismFields.TryGetValue(name, out f)) f.SetValue(_prism, value);
+        }
+
+        /// <summary>
+        /// Push the glare settings. Bloom is scaled rather than replaced, so a
+        /// strength of 1 means "the game's own amount" and the dial reads as a
+        /// multiplier on whatever BSG tuned rather than an absolute nobody can
+        /// picture.
+        /// </summary>
+        public static void DrivePrism(float bloomMul, float threshold, float dirt, float chromatic)
+        {
+            if (_prism == null) return;
+            try
+            {
+                object stockBloom;
+                float baseBloom = 1f;
+                if (_prismStock.TryGetValue("bloomIntensity", out stockBloom) && stockBloom is float)
+                    baseBloom = (float)stockBloom;
+
+                PrismSet("useBloom", true);
+                PrismSet("bloomIntensity", baseBloom * bloomMul);
+                if (threshold > 0f) PrismSet("bloomThreshold", threshold);
+
+                if (dirt > 0.001f && PrismHasDirtTexture)
+                {
+                    PrismSet("useLensDirt", true);
+                    PrismSet("dirtIntensity", dirt);
+                }
+
+                if (chromatic > 0.001f)
+                {
+                    PrismSet("useChromaticAberration", true);
+                    PrismSet("chromaticIntensity", chromatic);
+                }
+            }
+            catch (Exception e)
+            {
+                PrismWhyNot = e.GetType().Name + " while writing - giving up";
+                Plugin.Log.LogWarning("Lens glare: " + PrismWhyNot);
+                _prism = null;
+            }
+        }
+
+        /// <summary>Hand every stock value back. Never throws.</summary>
+        public static void ReleasePrism()
+        {
+            if (_prism == null || _prismStock.Count == 0) return;
+            try
+            {
+                foreach (var kv in _prismStock) PrismSet(kv.Key, kv.Value);
+            }
+            catch { }
         }
 
         // ================= Aiming field of view ==========================

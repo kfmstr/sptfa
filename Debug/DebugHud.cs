@@ -93,6 +93,23 @@ namespace SPTFreeAim.Debugging
                               FreeAimPatches.LastRoll, cfg.GunRollAimed.Value, cfg.GunRollReady.Value,
                               cfg.GunRollAboutView.Value ? "about view" : "about barrel")
                         : "off") +
+                Row("body lean", cfg.BodyLeanEnabled.Value
+                        ? string.Format("<color=#7fd1b9>{0,6:F1} deg</color>   aimed {1:F1} / ready {2:F1}   gun {3}",
+                              FreeAimPatches.LastLean, cfg.BodyLeanAimed.Value, cfg.BodyLeanReady.Value,
+                              cfg.GunLeansWithBody.Value ? "follows" : "level")
+                        : "off") +
+                Row("shoulder give", Mathf.Abs(cfg.ShoulderGive.Value) > 0.0001f
+                        ? string.Format("<color=#7fd1b9>{0,6:F3} m</color>   max {1:F3}",
+                              FreeAimPatches.LastGive, cfg.ShoulderGive.Value)
+                        : "off") +
+                Row("lens glare", cfg.GlareEnabled.Value
+                        ? (GameRefs.HavePrism
+                              ? string.Format("<color=#7fd1b9>bloom x{0:F2}</color>  dirt {1:F2}{2}  fringe {3:F2}",
+                                    cfg.GlareBloom.Value, cfg.GlareDirt.Value,
+                                    GameRefs.PrismHasDirtTexture ? "" : " <color=#ffcc55>(no texture)</color>",
+                                    cfg.GlareChromatic.Value)
+                              : "<color=#ffcc55>" + GameRefs.PrismWhyNot + "</color>")
+                        : "off") +
                 Row("sight alpha", cfg.SightAlpha.Value > 0.001f
                         ? OpticHousing.Status
                         : "off") +
@@ -115,8 +132,8 @@ namespace SPTFreeAim.Debugging
 
             // Grows with the rows. A clipped HUD is a HUD you stop trusting, and
             // the hinge row is wider now that it prints the live pivot.
-            GUI.Box(new Rect(10, 10, 560, 360), GUIContent.none, _boxStyle);
-            GUI.Label(new Rect(20, 18, 540, 344), "<b>SPT Free Aim</b>\n\n" + body, _style);
+            GUI.Box(new Rect(10, 10, 560, 414), GUIContent.none, _boxStyle);
+            GUI.Label(new Rect(20, 18, 540, 398), "<b>SPT Free Aim</b>\n\n" + body, _style);
         }
 
 
