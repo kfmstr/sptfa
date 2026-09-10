@@ -79,6 +79,11 @@ namespace SPTFreeAim
         public ConfigEntry<float> DofMaxDistance;
         public ConfigEntry<bool> DofOnlyAiming;
         public ConfigEntry<float> DofStrength;
+        public ConfigEntry<bool> GunRollEnabled;
+        public ConfigEntry<float> GunRollAimed;
+        public ConfigEntry<float> GunRollReady;
+        public ConfigEntry<bool> InvertGunRoll;
+        public ConfigEntry<bool> GunRollAboutView;
         public ConfigEntry<float> SightAlpha;
         public ConfigEntry<bool> LogSightMaterials;
         public ConfigEntry<bool> DumpLensMaterial;
@@ -344,6 +349,39 @@ namespace SPTFreeAim
                 "makes the ready position worth returning to. 1.0 removes the distinction.",
                 new AcceptableValueRange<float>(0.25f, 4f)));
 
+            GunRollEnabled = cfg.Bind(S_PIVOT, "Gun rolls as it swings", false,
+                "Cants the weapon while it swings, the way your wrist rolls when the support hand " +
+                "leads the gun around. Turn right and it rolls clockwise; turn left and it rolls " +
+                "counter-clockwise.\n" +
+                "\n" +
+                "It is proportional from zero while you are aiming, because the weapon is braced " +
+                "against the shoulder and every bit of swing twists it. At low ready it only shows " +
+                "up once the gun is pushed past the cone - the weapon is hanging off your hands " +
+                "with slack in the wrists, and nothing twists until the swing takes up that slack.\n" +
+                "\n" +
+                "Off by default. Turn it on and watch the gun before deciding the numbers.");
+
+            GunRollAimed = cfg.Bind(S_PIVOT, "Gun roll aimed (deg)", 8f, new ConfigDescription(
+                "How far the weapon cants at the hard cap while shouldered. Negative flips the " +
+                "direction, same as the invert switch.",
+                new AcceptableValueRange<float>(-45f, 45f)));
+
+            GunRollReady = cfg.Bind(S_PIVOT, "Gun roll at low ready (deg)", 4f, new ConfigDescription(
+                "The same, at low ready, where it only begins past the cone. Smaller than the aimed " +
+                "figure is the point - a braced weapon twists more than a hanging one.",
+                new AcceptableValueRange<float>(-45f, 45f)));
+
+            InvertGunRoll = cfg.Bind(S_PIVOT, "Invert gun roll", false,
+                "If it cants the wrong way. Which sign means clockwise depends on the weapon's own " +
+                "axes, and that has needed an experiment on every version so far.");
+
+            GunRollAboutView = cfg.Bind(S_PIVOT, "Roll about the view instead of the barrel", false,
+                "Off, the weapon rolls about its own forward axis - a true cant about the barrel.\n" +
+                "\n" +
+                "On, it rolls about the axis you are looking down. That one cannot be wrong, but at " +
+                "low ready, with the muzzle at the floor, it reads as a twist rather than a cant. " +
+                "Use it only if the barrel axis turns out to be wrong on some weapon.");
+
             DofEnabled = cfg.Bind(S_BODY, "Gun blur: focus past the gun", true,
                 "The gun goes soft while your eyes are downrange - the focused-at-infinity look.\n" +
                 "\n" +
@@ -379,9 +417,17 @@ namespace SPTFreeAim
                 "where the gun is at its softest.",
                 new AcceptableValueRange<float>(10f, 500f)));
 
-            DofOnlyAiming = cfg.Bind(S_BODY, "Gun blur only while aiming", true,
-                "On, it fades in as you shoulder the weapon. Off, it is always there, which is " +
-                "more truthful about eyes and much more noticeable while moving.");
+            DofOnlyAiming = cfg.Bind(S_BODY, "Gun blur only while aiming", false,
+                "OFF by default, and that is the honest setting: this is about where your EYES are " +
+                "focused, not where the gun is. Your eyes are downrange whether the weapon is " +
+                "shouldered or hanging at low ready, so the gun should be soft either way.\n" +
+                "\n" +
+                "At low ready it gets softer on its own, with nothing extra to configure - the " +
+                "weapon is nearer the eye down there, so it sits further from the plane of focus " +
+                "and the depth effect blurs it harder. That falloff is the effect doing physics, " +
+                "not a setting.\n" +
+                "\n" +
+                "Turn this on if you want the blur to fade in only as you shoulder the weapon.");
 
             DofStrength = cfg.Bind(S_BODY, "Gun blur strength", 1f, new ConfigDescription(
                 "Scales the blur amount above. Back this off for something present but quieter, " +

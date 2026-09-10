@@ -77,6 +77,11 @@ namespace SPTFreeAim.Debugging
                               FocusDepth.LastFocus, FocusDepth.LastBlur,
                               cfg.DofBand.Value, FocusDepth.Status)
                         : "off") +
+                Row("gun roll", cfg.GunRollEnabled.Value
+                        ? string.Format("<color=#7fd1b9>{0,6:F1} deg</color>   aimed {1:F0} / ready {2:F0}   {3}",
+                              FreeAimPatches.LastRoll, cfg.GunRollAimed.Value, cfg.GunRollReady.Value,
+                              cfg.GunRollAboutView.Value ? "about view" : "about barrel")
+                        : "off") +
                 Row("sight alpha", cfg.SightAlpha.Value > 0.001f
                         ? OpticHousing.Status
                         : "off") +
@@ -97,8 +102,10 @@ namespace SPTFreeAim.Debugging
                 "\n" +
                 Row("probe (F10)", YawWriteProbe.LastResult);
 
-            GUI.Box(new Rect(10, 10, 490, 318), GUIContent.none, _boxStyle);
-            GUI.Label(new Rect(20, 18, 470, 302), "<b>SPT Free Aim</b>\n\n" + body, _style);
+            // Grows with the rows. Two were added for gun roll and sight alpha;
+            // a clipped HUD is a HUD you stop trusting.
+            GUI.Box(new Rect(10, 10, 490, 356), GUIContent.none, _boxStyle);
+            GUI.Label(new Rect(20, 18, 470, 340), "<b>SPT Free Aim</b>\n\n" + body, _style);
         }
 
 

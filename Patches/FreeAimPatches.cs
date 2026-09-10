@@ -229,7 +229,12 @@ namespace SPTFreeAim.Patches
             if (doPose) GuardPose.BeginFrame(weaponRoot); else GuardPose.Release(weaponRoot);
 
             if (doCamera) { ApplyCameraOffset(pwa, -applied); GuardCamera.EndFrame(cameraTransform); }
-            if (doWeapon) { ApplyWeaponOffset(pwa, applied, cfg); GuardWeapon.EndFrame(weaponRootAnim); }
+            if (doWeapon)
+            {
+                ApplyWeaponOffset(pwa, applied, cfg);
+                ApplyGunRoll(pwa, weaponRootAnim, applied.x, st.AimBlend, cfg);
+                GuardWeapon.EndFrame(weaponRootAnim);
+            }
             if (doPose) { ApplyLoweredPose(pwa, p, dt); ApplyReadyPose(pwa, p, dt); GuardPose.EndFrame(weaponRoot); }
 
             ReportParentageOnce(weaponRootAnim, weaponRoot);
@@ -334,6 +339,75 @@ namespace SPTFreeAim.Patches
             // correct - do not remove it as dead code.
             GameRefs.LocalRotateAround(root, -pivot, Vector3.zero);
         }
+
+        /// <summary>
+        /// Cant the weapon as it swings - the wrist rolling as the support hand
+        /// leads the gun around.
+        ///
+        /// The owner's description, and the sign convention: turn RIGHT and the
+        /// gun rolls CLOCKWISE from behind it, turn left and it rolls
+        /// counter-clockwise. It is more pronounced while aiming, and at low ready
+        /// it only appears once the gun is pushed well past the cone.
+        ///
+        /// That last part is the interesting half. Aimed, the weapon is braced
+        /// against the shoulder and every bit of swing twists it, so the roll is
+        /// proportional from zero. At low ready the weapon hangs off the hands
+        /// with slack in the wrists, and nothing twists until the swing takes up
+        /// that slack - which is exactly the cone. So the deadband IS the cone,
+        /// and it fades out as the weapon comes up.
+        ///
+        ///     dead = cone * (1 - aimBlend)
+        ///     t    = clamp01((|yaw| - dead) / (cap - dead)) * sign(yaw)
+        ///     roll = t * lerp(degreesReady, degreesAimed, aimBlend)
+        ///
+        /// This rotates orientation only and never position, so it cannot displace
+        /// the weapon or disturb the offset applied just before it. Off by
+        /// default, like every mechanic added since F20.
+        /// </summary>
+        private static void ApplyGunRoll(ProceduralWeaponAnimation pwa, Transform root,
+                                         float yawOffset, float aimBlend, FreeAimConfig cfg)
+        {
+            if (!cfg.GunRollEnabled.Value || root == null) return;
+
+            float cone = Mathf.Abs(cfg.ConeDegrees.Value);
+            float cap = Mathf.Abs(cfg.CapDegrees.Value);
+            float blend = Mathf.Clamp01(aimBlend);
+
+            float dead = cone * (1f - blend);
+            float span = Mathf.Max(cap - dead, 1f);
+
+            float mag = Mathf.Max(0f, Mathf.Abs(yawOffset) - dead);
+            float t = Mathf.Clamp01(mag / span) * Mathf.Sign(yawOffset);
+
+            float degrees = Mathf.Lerp(cfg.GunRollReady.Value, cfg.GunRollAimed.Value, blend);
+            float roll = t * degrees;
+            if (cfg.InvertGunRoll.Value) roll = -roll;
+
+            LastRoll = roll;
+            if (Mathf.Abs(roll) < 0.01f) return;
+
+            // Which axis to roll about is a real question and the reason it is a
+            // setting. The weapon's own forward is the barrel on every EFT weapon
+            // seen so far, and rolling about it is a true cant. The camera's
+            // forward is the safe fallback: it cannot be wrong, because it is the
+            // axis the player is looking down, but at low ready - where the muzzle
+            // is pointed at the floor - it reads as a twist rather than a cant.
+            //
+            // Note this is a much smaller bet than F20's: a roll about a slightly
+            // wrong axis looks like a slightly different tilt, where a PIVOT on a
+            // wrong axis put the hinge in the next room.
+            Vector3 axis = root.forward;
+            if (cfg.GunRollAboutView.Value)
+            {
+                Transform cam = GameRefs.GetCameraTransform(pwa);
+                if (cam != null) axis = cam.forward;
+            }
+
+            root.rotation = Quaternion.AngleAxis(roll, axis) * root.rotation;
+        }
+
+        /// <summary>Last roll applied, in degrees, for the HUD.</summary>
+        public static float LastRoll;
 
         private static Vector3 _loweredPos;
         private static Vector3 _loweredRot;

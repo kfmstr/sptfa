@@ -2399,3 +2399,89 @@ Finding *a* thing that matches the description is not finding *the* thing that
 runs. Both DepthOfFields were real, both were reachable, both were on the camera.
 The probe that mattered was not "does a DOF exist" but "who calls it" - and that
 is four lines of Cecil I could have written at F26.
+
+---
+
+## F37. The blur was never about aiming, and the cone is the wrist's slack
+
+Two changes from three frames of reference footage, and both of them are cases
+where the right implementation was smaller than the one I would have written.
+
+### The blur should not be gated on aiming
+
+I shipped `Gun blur only while aiming` defaulted ON, reasoning that the effect
+should fade in as the weapon comes up. The reference frames say otherwise: the
+gun is heavily soft at low ready, hanging at the bottom of the screen, while the
+room beyond is sharp.
+
+Of course it is. **The effect is about where the EYES are focused, not where the
+gun is.** Your eyes are downrange whether the weapon is shouldered or hanging.
+Gating it on the aim blend encoded a confusion between the two.
+
+The pleasing part is what did NOT need building. At low ready the weapon sits
+nearer the eye, so it is further from the plane of focus, so a depth-based effect
+blurs it harder with no extra term. The stronger low-ready blur the owner asked
+for is the physics of the effect chosen in F36, not a setting. The whole change
+is a default flipped from `true` to `false`.
+
+That is twice in two findings that the right move was to remove something rather
+than add one.
+
+### Roll: the deadband IS the cone
+
+The owner's description of the cant, exactly as given:
+
+> when we turn to one of the direction too far, then the gun is rotated a bit in
+> the opposite direction where we turn (left-counterclockwise, right-clockwise),
+> when aiming it is more prominent, when going low ready, it is only when we push
+> far from the cone
+
+The first two clauses are an ordinary proportional term. The third is the
+interesting one, and it has a physical reading that makes it fall out for free:
+
+- **Aimed**, the weapon is braced against the shoulder. There is no slack, so
+  every bit of swing twists it, and the roll is proportional from zero.
+- **Low ready**, the weapon hangs off the hands with slack in the wrists. Nothing
+  twists until the swing takes up that slack.
+
+And the machine already has a number for "how far the gun swings before anything
+starts happening": the cone. So the deadband is not a new tuning constant to
+guess - it is the cone, fading out as the weapon comes up:
+
+```
+dead = cone * (1 - aimBlend)
+t    = clamp01((|yaw| - dead) / (cap - dead)) * sign(yaw)
+roll = t * lerp(degreesReady, degreesAimed, aimBlend)
+```
+
+Two magnitudes to tune and no third constant. F16's rule - an empty field beats a
+plausible-looking inherited number - applies just as much to a number I would
+have invented myself.
+
+### The axis, and why this is not F20 again
+
+Rolling needs an axis, and picking one from the weapon's local frame is what blew
+up in F20. It is a much smaller bet this time, and the difference is worth being
+explicit about:
+
+- F20 used a guessed axis to place a **pivot** 0.3 m away. Wrong axis, and the
+  hinge lands somewhere off the weapon entirely, so rotation reads as translation
+  and the whole mechanic breaks.
+- This uses an axis for a **roll of a few degrees**. Wrong axis, and the weapon
+  tilts on a slightly different line. It degrades to "not quite right" rather
+  than to "broken".
+
+Default is the weapon's own forward, with the camera's forward behind a switch as
+the cannot-be-wrong fallback - though at low ready, with the muzzle at the floor,
+rolling about the view axis reads as a twist rather than a cant.
+
+It rotates orientation only and never position, so it cannot displace the weapon
+or disturb the offset applied immediately before it, and it ships **off by
+default** like every mechanic added since F20.
+
+### The lesson worth keeping
+
+When a described behaviour needs a threshold, check whether the machine already
+has that number under another name before inventing one. Here the wrist's slack
+and the aim cone are the same quantity seen from two directions, and noticing
+that removed a tuning constant instead of adding one.
