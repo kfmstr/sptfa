@@ -103,14 +103,9 @@ namespace SPTFreeAim.Compat
         private static bool _loggedChain;
 
         // ---- Aiming field of view ------------------------------------------
-        // CameraManager.AimDeltaFov is a PUBLIC STATIC float: how much the field
-        // of view narrows when the weapon comes into the shoulder. No singleton
-        // to reach through, which makes both-eyes-open a one-field change.
-        private static FieldInfo _f_AimDeltaFov;
-        private static float _stockAimDeltaFov;
-        private static bool _haveStockAimDeltaFov;
-        public static bool AimFovAvailable { get { return _f_AimDeltaFov != null; } }
-        public static string AimFovWhyNot = "not resolved yet";
+        // Everything here now lives further down, next to the SetFov seam that
+        // actually works. AimDeltaFov turned out to be a const that nothing reads
+        // at all - see F38.
 
         // ---- HandsContainer (PlayerSpring) transforms -----------------------
         // All three are public FIELDS, not properties. See Compat/Member.cs.
@@ -232,20 +227,8 @@ namespace SPTFreeAim.Compat
                 // in the middle of a frame. IsLiteral is the only thing that
                 // separates a const from a static field, and Cecil reports both
                 // the same way. F29.
-                Type camMgr = asmCSharp.GetType("EFT.CameraControl.CameraManager", false);
-                if (camMgr != null)
-                {
-                    FieldInfo f = camMgr.GetField("AimDeltaFov",
-                        BindingFlags.Static | BindingFlags.Public | BindingFlags.NonPublic);
-
-                    if (f != null && (f.IsLiteral || f.IsInitOnly))
-                        AimFovWhyNot = "CameraManager.AimDeltaFov is a " +
-                                       (f.IsLiteral ? "const" : "readonly") + ", so it cannot be written";
-                    else if (f == null)
-                        AimFovWhyNot = "CameraManager.AimDeltaFov not found";
-                    else
-                        _f_AimDeltaFov = f;
-                }
+                // The FOV seam is CameraManager.SetFov, resolved lazily further
+                // down - CameraManager does not exist until a raid is running.
                 foreach (string n in CameraRecoilMethodNames)
                 {
                     M_Pwa_CameraRecoil = T_ProceduralWeaponAnimation.GetMethod(n, ANY);
@@ -936,56 +919,197 @@ namespace SPTFreeAim.Compat
             Plugin.Log.LogInfo(sb.ToString());
         }
 
-        // ================= Aiming field of view ==========================
+        // ============= The weapon's own rotation centre ==================
+        //
+        // The owner has said three times that the gun should turn about the RIGHT
+        // HAND, and that it still feels like the buttstock is glued to his
+        // shoulder. He is right, and the number that fixes it was in the game the
+        // whole time (docs/07-FINDINGS.md F38):
+        //
+        //   PlayerSpring.RotationCenter        - centre WITH the stock braced
+        //   PlayerSpring.RotationCenterWoStock - centre with the stock NOT braced
+        //
+        // Both are Vector3s in WeaponRootAnim's LOCAL space - the same space the
+        // legacy pivot already uses - and BSG authors them per weapon.
+        // ProceduralWeaponAnimation.ApplyComplexRotation picks between them:
+        //
+        //   center = _shouldMoveWeaponCloser ? RotationCenterWoStock : RotationCenter;
+        //   world  = HandsContainer.WeaponRootAnim.TransformPoint(center);
+        //
+        // So "about the shoulder" and "about the hands" are not two behaviours to
+        // model. They are two numbers the game ships, and the shoulder one is the
+        // one that was in use.
+
+        // M_HandsContainer is already declared up with the other PWA members.
+        private static readonly Member M_RotationCenter =
+            new Member("PlayerSpring.RotationCenter", "RotationCenter");
+        private static readonly Member M_RotationCenterWoStock =
+            new Member("PlayerSpring.RotationCenterWoStock", "RotationCenterWoStock");
+
+        private static Type _boundPwaType, _boundSpringType;
+        public static bool RotationCentreAvailable { get; private set; }
+        public static string RotationCentreWhyNot = "not resolved yet";
+        public static Vector3 LastRotationCentre;
 
         /// <summary>
-        /// Scale how much the view narrows when the weapon is shouldered.
-        /// 1 leaves it stock, 0 removes the narrowing entirely - both eyes open.
-        /// The stock value is captured once, so repeated calls scale the original
-        /// rather than compounding on last frame's result.
+        /// The weapon's own rotation centre, in WeaponRootAnim local space.
+        /// <paramref name="stockWeight"/> 0 takes the hands centre, 1 the
+        /// shouldered one, and anything between blends.
+        /// Returns false when the game does not offer them.
         /// </summary>
-        public static bool SetAimFovNarrowing(float multiplier)
+        public static bool GetRotationCentre(object pwa, float stockWeight, out Vector3 centre)
         {
-            if (_f_AimDeltaFov == null) return false;
+            centre = Vector3.zero;
+            if (pwa == null) return false;
 
-            if (!_haveStockAimDeltaFov)
+            Type pt = pwa.GetType();
+            if (pt != _boundPwaType)
             {
-                object v = _f_AimDeltaFov.GetValue(null);
-                if (!(v is float)) return false;
-                _stockAimDeltaFov = (float)v;
-                _haveStockAimDeltaFov = true;
+                _boundPwaType = pt;
+                _boundSpringType = null;
+                // Resolve() normally binds this already; re-bind only if it did not,
+                // so this never clobbers a working binding.
+                if (!M_HandsContainer.Resolved && !M_HandsContainer.Bind(pt))
+                {
+                    RotationCentreWhyNot = "ProceduralWeaponAnimation.HandsContainer not found";
+                    return false;
+                }
             }
 
-            try { _f_AimDeltaFov.SetValue(null, _stockAimDeltaFov * multiplier); }
-            catch (Exception e)
+            object spring = M_HandsContainer.Get(pwa);
+            if (spring == null) { RotationCentreWhyNot = "HandsContainer is null"; return false; }
+
+            Type st = spring.GetType();
+            if (st != _boundSpringType)
             {
-                // Give up on this permanently rather than throwing once a frame.
-                _f_AimDeltaFov = null;
-                AimFovWhyNot = e.GetType().Name + " on write - the field is not settable";
-                Plugin.Log.LogWarning("Peripheral vision unavailable: " + AimFovWhyNot);
-                return false;
+                _boundSpringType = st;
+                bool a = M_RotationCenter.Bind(st);
+                bool b = M_RotationCenterWoStock.Bind(st);
+                if (!a && !b)
+                {
+                    RotationCentreWhyNot = "PlayerSpring has neither RotationCenter nor RotationCenterWoStock";
+                    return false;
+                }
+                RotationCentreAvailable = true;
+                Plugin.Log.LogInfo("Rotation centre: " + M_RotationCenter.Describe()
+                    + " / " + M_RotationCenterWoStock.Describe() + " on " + st.Name);
             }
+
+            Vector3 stock = M_RotationCenter.Get<Vector3>(spring, Vector3.zero);
+            Vector3 hands = M_RotationCenterWoStock.Get<Vector3>(spring, stock);
+
+            centre = Vector3.Lerp(hands, stock, Mathf.Clamp01(stockWeight));
+            LastRotationCentre = centre;
             return true;
         }
 
-        /// <summary>Hand the game its own value back.</summary>
-        /// <summary>
-        /// Hand the game its own value back. Never throws.
-        ///
-        /// This is not defensive habit, it is the specific bug: the write threw,
-        /// the catch handler called THIS to clean up, this performed the same
-        /// failing write, and the second exception escaped the handler and took
-        /// the whole mod down with an emergency disable. An error handler must
-        /// not repeat the operation that failed. F29.
-        /// </summary>
-        public static void ReleaseAimFov()
+        // ================= Aiming field of view ==========================
+        //
+        // F29 said AimDeltaFov could not be written because it is a const. True,
+        // and beside the point: NOTHING READS IT. The 15 is inlined straight into
+        // ProceduralWeaponAnimation.OnAimOrPoseChanged, so a writable field would
+        // have changed nothing either. F38.
+        //
+        // What the game actually does, on every aim or pose change:
+        //
+        //   float fov = !IsAiming        ? HeadBobbing
+        //             : CurrentScope.IsOptic ? 35f
+        //                                    : HeadBobbing - 15f;
+        //   CameraManager.Instance.SetFov(fov, 1f, !_isAiming);
+        //
+        // So the seam is SetFov, and the honest target to restore is HeadBobbing -
+        // the game's own un-aimed value, not a magic 15 subtracted back.
+
+        private static readonly Member M_HeadBobbing =
+            new Member("ProceduralWeaponAnimation.HeadBobbing", "HeadBobbing");
+        private static readonly Member M_HoldingBreath =
+            new Member("PhysicalBase.HoldingBreath", "HoldingBreath");
+        private static Type _boundBreathType;
+
+        public static bool AimFovAvailable { get { return _mSetFov != null; } }
+        public static string AimFovWhyNot = "not resolved yet";
+
+        private static MethodInfo _mSetFov;
+        private static PropertyInfo _pCamMgrInstance;
+        private static Type _camMgrType;
+
+        /// <summary>True while the player is holding their breath.</summary>
+        public static bool IsHoldingBreath(object player)
         {
-            if (_f_AimDeltaFov == null || !_haveStockAimDeltaFov) return;
-            try { _f_AimDeltaFov.SetValue(null, _stockAimDeltaFov); }
-            catch { _f_AimDeltaFov = null; }
+            if (player == null) return false;
+            object phys = M_Physical.Get(player);
+            if (phys == null) return false;
+
+            Type pt = phys.GetType();
+            if (pt != _boundBreathType)
+            {
+                _boundBreathType = pt;
+                if (!M_HoldingBreath.Bind(pt)) return false;
+                Plugin.Log.LogInfo("Hold breath: " + M_HoldingBreath.Describe() + " on " + pt.Name);
+            }
+            return M_HoldingBreath.Get<bool>(phys, false);
         }
 
-        public static float StockAimDeltaFov { get { return _stockAimDeltaFov; } }
+        /// <summary>The field of view the game uses when NOT aiming.</summary>
+        public static float GetBaseFov(object pwa, float fallback)
+        {
+            if (pwa == null) return fallback;
+            if (!M_HeadBobbing.Resolved && !M_HeadBobbing.Bind(pwa.GetType())) return fallback;
+            return M_HeadBobbing.Get<float>(pwa, fallback);
+        }
+
+        public static bool ResolveSetFov()
+        {
+            if (_mSetFov != null) return true;
+            try
+            {
+                Assembly asmCSharp = AppDomain.CurrentDomain.GetAssemblies()
+                    .FirstOrDefault(a => a.GetName().Name == "Assembly-CSharp");
+                if (asmCSharp == null) { AimFovWhyNot = "Assembly-CSharp not loaded"; return false; }
+
+                _camMgrType = asmCSharp.GetType("EFT.CameraControl.CameraManager", false);
+                if (_camMgrType == null) { AimFovWhyNot = "CameraManager not found"; return false; }
+
+                _pCamMgrInstance = _camMgrType.GetProperty("Instance",
+                    BindingFlags.Static | BindingFlags.Public | BindingFlags.NonPublic);
+
+                _mSetFov = _camMgrType.GetMethod("SetFov",
+                    BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic,
+                    null, new[] { typeof(float), typeof(float), typeof(bool) }, null);
+
+                if (_mSetFov == null) { AimFovWhyNot = "CameraManager.SetFov(float,float,bool) not found"; return false; }
+                return true;
+            }
+            catch (Exception e)
+            {
+                AimFovWhyNot = e.GetType().Name + ": " + e.Message;
+                return false;
+            }
+        }
+
+        /// <summary>The MethodInfo to hand Harmony for the SetFov patch.</summary>
+        public static MethodInfo SetFovMethod { get { return _mSetFov; } }
+
+        /// <summary>
+        /// Ask the game to move to a field of view over <paramref name="time"/>
+        /// seconds, using its own coroutine so nothing fights it frame by frame.
+        /// </summary>
+        public static bool CallSetFov(float fov, float time)
+        {
+            if (!ResolveSetFov()) return false;
+            try
+            {
+                object inst = _pCamMgrInstance == null ? null : _pCamMgrInstance.GetValue(null, null);
+                if (inst == null) return false;
+                _mSetFov.Invoke(inst, new object[] { fov, time, false });
+                return true;
+            }
+            catch (Exception e)
+            {
+                AimFovWhyNot = e.GetType().Name + " calling SetFov";
+                return false;
+            }
+        }
 
         public static string Describe()
         {

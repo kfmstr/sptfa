@@ -63,7 +63,14 @@ namespace SPTFreeAim.Debugging
                         ? string.Format("<color=#7fd1b9>AROUND GRIP</color>  pivot {0,6:F2} {1,6:F2} {2,6:F2}  (grip {3})",
                               FreeAimPatches.LastPivot.x, FreeAimPatches.LastPivot.y,
                               FreeAimPatches.LastPivot.z, cfg.GripFromEye.Value)
-                        : "<color=#ffcc55>LEGACY EULER</color>  (F22 - reinterprets the axes)") +
+                        : string.Format("<color=#ffcc55>LEGACY EULER</color>  pivot {0,6:F3} {1,6:F3} {2,6:F3}  {3}",
+                              FreeAimPatches.LastPivotLocal.x, FreeAimPatches.LastPivotLocal.y,
+                              FreeAimPatches.LastPivotLocal.z,
+                              cfg.PivotFromWeapon.Value
+                                  ? (GameRefs.RotationCentreAvailable
+                                        ? "<color=#7fd1b9>from weapon</color>"
+                                        : "<color=#ffcc55>" + GameRefs.RotationCentreWhyNot + "</color>")
+                                  : "manual dial")) +
                 Row("arms", GameRefs.HandsStaminaAvailable
                         ? string.Format("{0,6:F0} hands stamina   drain {1}",
                               GameRefs.GetHandsStamina(FreeAimPatches.LocalPlayer),
@@ -85,12 +92,12 @@ namespace SPTFreeAim.Debugging
                 Row("sight alpha", cfg.SightAlpha.Value > 0.001f
                         ? OpticHousing.Status
                         : "off") +
-                Row("peripheral", GameRefs.AimFovAvailable
-                        ? (cfg.KeepPeripheralVision.Value
-                              ? string.Format("<color=#7fd1b9>open</color>  narrowing x{0:F2}  (stock delta {1:F1})",
-                                    1f - cfg.PeripheralStrength.Value * st.AimBlend, GameRefs.StockAimDeltaFov)
-                              : "stock Tarkov")
-                        : "<color=#ffcc55>" + GameRefs.AimFovWhyNot + "</color>") +
+                Row("aim fov", cfg.KeepFovWhenAiming.Value
+                        ? (GameRefs.AimFovAvailable
+                              ? "<color=#7fd1b9>" + FreeAimPatches.AimFovState + "</color>   breath "
+                                    + (GameRefs.IsHoldingBreath(FreeAimPatches.LocalPlayer) ? "HELD" : "-")
+                              : "<color=#ffcc55>" + GameRefs.AimFovWhyNot + "</color>")
+                        : "stock Tarkov") +
                 Row("parentage", FreeAimPatches.ParentageReport) +
                 Row("cone / cap", string.Format("{0:F1} / {1:F1} deg", cfg.ConeDegrees.Value, cfg.CapDegrees.Value)) +
                 Row("k / push", string.Format("{0:F1} / {1:F2}", cfg.SpringK.Value, cfg.PushFactor.Value)) +
@@ -102,10 +109,10 @@ namespace SPTFreeAim.Debugging
                 "\n" +
                 Row("probe (F10)", YawWriteProbe.LastResult);
 
-            // Grows with the rows. Two were added for gun roll and sight alpha;
-            // a clipped HUD is a HUD you stop trusting.
-            GUI.Box(new Rect(10, 10, 490, 356), GUIContent.none, _boxStyle);
-            GUI.Label(new Rect(20, 18, 470, 340), "<b>SPT Free Aim</b>\n\n" + body, _style);
+            // Grows with the rows. A clipped HUD is a HUD you stop trusting, and
+            // the hinge row is wider now that it prints the live pivot.
+            GUI.Box(new Rect(10, 10, 560, 360), GUIContent.none, _boxStyle);
+            GUI.Label(new Rect(20, 18, 540, 344), "<b>SPT Free Aim</b>\n\n" + body, _style);
         }
 
 

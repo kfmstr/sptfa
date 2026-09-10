@@ -51,6 +51,123 @@ namespace SPTFreeAim.Patches
             Plugin.Log.LogInfo("FreeAimPatches applied.");
         }
 
+        private static bool _fovPatched;
+
+        /// <summary>
+        /// Patch CameraManager.SetFov the first time we are actually in a raid.
+        /// It cannot be done in Apply: CameraManager is resolved by name from
+        /// Assembly-CSharp and does not exist before a raid loads, and a patch
+        /// that throws during startup takes the whole plugin with it (F30).
+        /// </summary>
+        private static void PatchSetFovOnce()
+        {
+            if (_fovPatched || _harmony == null) return;
+            if (!GameRefs.ResolveSetFov()) return;
+
+            _fovPatched = true;
+            try
+            {
+                _harmony.Patch(
+                    GameRefs.SetFovMethod,
+                    prefix: new HarmonyMethod(typeof(FreeAimPatches).GetMethod(
+                        nameof(BeforeSetFov), BindingFlags.Static | BindingFlags.NonPublic)));
+                Plugin.Log.LogInfo("Aim FOV: patched CameraManager.SetFov.");
+            }
+            catch (Exception e)
+            {
+                Plugin.Log.LogWarning("Aim FOV: could not patch SetFov, leaving it stock: " + e.Message);
+                GameRefs.AimFovWhyNot = "patch failed: " + e.GetType().Name;
+            }
+        }
+
+        // The last field of view the GAME asked for while aiming. That is its
+        // zoom target, whatever it happens to be - HeadBobbing minus fifteen on
+        // irons, a flat thirty-five through an optic - so recording it beats
+        // recomputing it and cannot drift when BSG changes the numbers.
+        private static float _gameAimFov = -1f;
+        private static bool _selfCall;
+        private static bool _lastWantZoom;
+        public static string AimFovState = "stock";
+
+        /// <summary>
+        /// Cancel the shouldering zoom, because your head did not move.
+        ///
+        /// Tarkov narrows the view by fifteen degrees the moment the weapon comes
+        /// up, which reads as leaning into the sight. Under free aim that is
+        /// wrong twice over: the eye has not moved, and the gun is no longer
+        /// nailed to the middle of the screen for it to lean toward.
+        ///
+        /// It is restored to HeadBobbing - the game's own un-aimed value - rather
+        /// than by adding fifteen back, so it stays correct if that number ever
+        /// changes.
+        /// </summary>
+        private static bool BeforeSetFov(ref float x, ref float time, ref bool applyFovOnCamera)
+        {
+            if (_selfCall) return true;
+
+            FreeAimConfig cfg = Plugin.Instance == null ? null : Plugin.Instance.Cfg;
+            if (cfg == null || !cfg.KeepFovWhenAiming.Value) return true;
+
+            ProceduralWeaponAnimation pwa = LocalPwa;
+            if (pwa == null) return true;
+
+            float baseFov = GameRefs.GetBaseFov(pwa, -1f);
+            if (baseFov <= 0f) return true;
+
+            // Not aiming: this IS the base value. Nothing to do.
+            if (x >= baseFov - 0.01f) return true;
+
+            _gameAimFov = x;
+
+            if (WantZoom(cfg))
+            {
+                AimFovState = "zoomed (breath)";
+                return true;
+            }
+
+            AimFovState = "held open";
+            x = baseFov;
+            return true;
+        }
+
+        private static bool WantZoom(FreeAimConfig cfg)
+        {
+            return cfg.ZoomOnHoldBreath.Value && GameRefs.IsHoldingBreath(LocalPlayer);
+        }
+
+        /// <summary>
+        /// Hold your breath and the view leans in - now you really are putting
+        /// your eye to the sight.
+        ///
+        /// The game only calls SetFov when the aim or pose CHANGES, so holding
+        /// breath mid-aim would otherwise do nothing. This watches the breath
+        /// state and makes that call itself, through the game's own coroutine, so
+        /// nothing is fighting the camera frame by frame.
+        /// </summary>
+        private static void ApplyAimFov(Plugin p, FreeAimConfig cfg)
+        {
+            PatchSetFovOnce();
+
+            if (!cfg.KeepFovWhenAiming.Value) { _lastWantZoom = false; AimFovState = "stock"; return; }
+
+            bool aiming = p.State.AimBlend > 0.5f;
+            bool want = aiming && WantZoom(cfg);
+
+            if (want == _lastWantZoom) return;
+            _lastWantZoom = want;
+
+            float baseFov = GameRefs.GetBaseFov(LocalPwa, -1f);
+            if (baseFov <= 0f) return;
+
+            float target = want && _gameAimFov > 0f ? _gameAimFov : baseFov;
+
+            _selfCall = true;
+            try { GameRefs.CallSetFov(target, cfg.ZoomTime.Value); }
+            finally { _selfCall = false; }
+
+            AimFovState = want ? "zooming in (breath)" : "easing back out";
+        }
+
         private static void ReleaseAll(ProceduralWeaponAnimation pwa)
         {
             GuardWeapon.Release(GameRefs.GetWeaponRootAnim(pwa));
@@ -69,7 +186,6 @@ namespace SPTFreeAim.Patches
 
         public static void Remove()
         {
-            GameRefs.ReleaseAimFov();
             FocusDepth.Release();
             OpticHousing.Release();
             LocalPlayer = null;
@@ -172,12 +288,11 @@ namespace SPTFreeAim.Patches
                 OpticHousing.Release();
             }
 
-            try { ApplyBothEyes(p, cfg); }
+            try { ApplyAimFov(p, cfg); }
             catch (Exception e)
             {
-                Plugin.Log.LogError("Both eyes open failed, switching it off: " + e);
-                cfg.KeepPeripheralVision.Value = false;
-                GameRefs.ReleaseAimFov();
+                Plugin.Log.LogError("Aim FOV failed, switching it off: " + e);
+                cfg.KeepFovWhenAiming.Value = false;
             }
 
             // The weapon's own recoil, routed to the gun bearing rather than the
@@ -331,6 +446,24 @@ namespace SPTFreeAim.Patches
             // the pistol grip. The Vector3 below is a fine offset on top, zero by
             // default, for nudging off that line.
             Vector3 pivot = Vector3.up * cfg.PivotDistance.Value + cfg.PivotFineOffset.Value;
+
+            // Or let the weapon say where it turns.
+            //
+            // PlayerSpring carries RotationCenter and RotationCenterWoStock, both
+            // Vector3s in exactly this space, both authored by BSG per weapon, and
+            // the game itself picks between them in ApplyComplexRotation. The
+            // first is the centre with the buttstock braced - which is why
+            // swinging has felt like the stock was glued to the shoulder. The
+            // second is the centre with it not braced: the hands.
+            //
+            // A measured number from the weapon beats a dial tuned by eye on one
+            // gun, and it is right on every other gun for free. F38.
+            Vector3 gameCentre;
+            if (cfg.PivotFromWeapon.Value &&
+                GameRefs.GetRotationCentre(pwa, cfg.PivotStockWeight.Value, out gameCentre))
+                pivot = gameCentre + cfg.PivotFineOffset.Value;
+
+            LastPivotLocal = pivot;
 
             GameRefs.LocalRotateAround(root, pivot, new Vector3(pitch, 0f, yaw));
 
@@ -535,16 +668,11 @@ namespace SPTFreeAim.Patches
             });
         }
 
-        private static void ApplyBothEyes(Plugin p, FreeAimConfig cfg)
-        {
-            if (!cfg.KeepPeripheralVision.Value) { GameRefs.ReleaseAimFov(); return; }
-
-            float open = cfg.PeripheralStrength.Value * p.State.AimBlend;
-            GameRefs.SetAimFovNarrowing(1f - Mathf.Clamp01(open));
-        }
-
         /// <summary>Last world pivot used, for the HUD.</summary>
         public static Vector3 LastPivot;
+
+        /// <summary>Last local pivot used by the legacy hinge, for the HUD.</summary>
+        public static Vector3 LastPivotLocal;
 
         private static bool _warnedPoseRot;
         private static void WarnPoseRotationSuppressed()

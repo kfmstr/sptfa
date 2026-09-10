@@ -1748,6 +1748,10 @@ sure.
 
 ## F29. Three bugs, one log, and an error handler that repeated the error
 
+> **Corrected by F38.** The const diagnosis is right but stops one question
+> short: `AimDeltaFov` is not read by anything at all, so a writable field would
+> have changed nothing either. The FOV seam is `CameraManager.SetFov`.
+
 > when I click on these buttons that add perepherial vision nothing happens ...
 > at some point the free aim completely stopped working regardless of what I was
 > trying to turn on/off
@@ -2485,3 +2489,102 @@ When a described behaviour needs a threshold, check whether the machine already
 has that number under another name before inventing one. Here the wrist's slack
 and the aim cone are the same quantity seen from two directions, and noticing
 that removed a tuning constant instead of adding one.
+
+---
+
+## F38. The weapon knows where it turns, and the FOV const was a decoy
+
+Two complaints, one shape: both had an answer sitting in the game, and in both
+cases my earlier diagnosis had stopped one question short.
+
+### "The buttstock is glued to my shoulder"
+
+The owner has said four times now that the gun should turn about the RIGHT HAND.
+I kept treating this as a tuning problem - a pivot dial to find by eye, a bore
+axis to guess at (F20), a grip point to place relative to the camera. All of it
+was unnecessary. `PlayerSpring`, which is `ProceduralWeaponAnimation.HandsContainer`
+and which this mod has held a reference to since the first build, carries:
+
+```
+Vector3 RotationCenter             - centre with the buttstock BRACED
+Vector3 RotationCenterWoStock      - centre with it NOT braced
+Vector3 RecoilPivot
+Vector3 MountingRotationCenter
+Vector3 MountingRotationCenterBipods
+Transform Fireport
+```
+
+Both centres are Vector3s in `WeaponRootAnim`'s **local space** - the exact space
+the legacy pivot already uses - and BSG authors them per weapon.
+`ApplyComplexRotation` picks between them:
+
+```csharp
+center = _shouldMoveWeaponCloser ? HandsContainer.RotationCenterWoStock
+                                 : HandsContainer.RotationCenter;
+world  = HandsContainer.WeaponRootAnim.TransformPoint(center);
+```
+
+So "about the shoulder" and "about the hands" were never two behaviours to model.
+They are two numbers the game ships, and the braced one is the one that was in
+use. The owner was describing `RotationCenter` and asking for
+`RotationCenterWoStock`, in those words, without knowing the field names.
+
+A measured number from the weapon beats a dial tuned by eye on one gun, and it is
+right on every other gun for free. `-0.15` was a real measurement of a real grip
+on one rifle; it was never going to generalise.
+
+### "I don't want the FOV to come closer"
+
+F29 concluded that `CameraManager.AimDeltaFov` could not be written because it is
+a const. True, and beside the point. The question I did not ask was **who reads
+it**, and the answer is:
+
+```
+=== who READS CameraManager.AimDeltaFov ===
+(nothing)
+```
+
+Nobody. Not one instruction in `Assembly-CSharp` loads that field. The 15 is
+inlined straight into `ProceduralWeaponAnimation.OnAimOrPoseChanged`:
+
+```csharp
+float fov = !IsAiming              ? HeadBobbing
+          : CurrentScope.IsOptic   ? 35f
+                                   : HeadBobbing - 15f;
+CameraManager.Instance.SetFov(fov, 1f, !_isAiming);
+```
+
+So the peripheral-vision feature could never have worked, and "it is a const"
+was the wrong reason for the right conclusion - a writable field would have done
+nothing either. That distinction matters, because "const" invites you to look for
+a way to write it, and there was none worth finding.
+
+`SetFov` is the seam. A prefix on it puts `x` back to `HeadBobbing` - the game's
+own un-aimed value, not fifteen subtracted back - so it stays correct if BSG ever
+changes the number.
+
+### Hold your breath and lean in
+
+The owner then asked for the zoom back while holding breath: *"like I am really
+focusing on the target and moving my head close."* `PhysicalBase.HoldingBreath`
+is a plain bool property, and `Player.Physical` was already reached for the arm
+drain.
+
+One wrinkle worth recording: the game only calls `SetFov` when the aim or pose
+**changes**, so holding breath mid-aim would never trigger it. The implementation
+watches the breath state and makes the call itself, through the game's own
+coroutine, rather than writing `Camera.fieldOfView` per frame and fighting it.
+The zoom target is not recomputed either - it is whatever the game last asked for
+while aiming, recorded in the prefix, so an optic still goes to its own
+magnification instead of a flat fifteen degrees.
+
+### The lesson worth keeping
+
+"Can I write this?" is the second question. **"Who reads this?"** is the first,
+and F29 shipped a finding without asking it. Same for the pivot: four rounds of
+tuning a number that the weapon was carrying the whole time.
+
+Both are the same failure as F36 - finding *a* mechanism that matches the
+description and stopping, instead of finding the one the game actually uses. That
+is three findings in a row. The probe that keeps paying is the cross-reference,
+not the lookup.

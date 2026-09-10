@@ -87,8 +87,11 @@ namespace SPTFreeAim
         public ConfigEntry<float> SightAlpha;
         public ConfigEntry<bool> LogSightMaterials;
         public ConfigEntry<bool> DumpLensMaterial;
-        public ConfigEntry<bool> KeepPeripheralVision;
-        public ConfigEntry<float> PeripheralStrength;
+        public ConfigEntry<bool> KeepFovWhenAiming;
+        public ConfigEntry<bool> ZoomOnHoldBreath;
+        public ConfigEntry<float> ZoomTime;
+        public ConfigEntry<bool> PivotFromWeapon;
+        public ConfigEntry<float> PivotStockWeight;
 
         // ---- Debug -------------------------------------------------------
         public ConfigEntry<bool> ShowHud;
@@ -349,6 +352,27 @@ namespace SPTFreeAim
                 "makes the ready position worth returning to. 1.0 removes the distinction.",
                 new AcceptableValueRange<float>(0.25f, 4f)));
 
+            PivotFromWeapon = cfg.Bind(S_PIVOT, "Take the pivot from the weapon itself", false,
+                "Ignores the pivot dials above and uses the rotation centre the WEAPON carries.\n" +
+                "\n" +
+                "Every weapon in Tarkov ships two of these - a centre for when the buttstock is " +
+                "braced against your shoulder, and one for when it is not - in exactly the space " +
+                "the pivot dial uses. The game picks between them itself. The braced one is what " +
+                "has been in use, which is why swinging has felt like the stock was glued to your " +
+                "shoulder.\n" +
+                "\n" +
+                "On, the gun turns about the hands instead, on every weapon, with no tuning. This " +
+                "is the fix for the buttstock feel. Turn it on first and swing before touching " +
+                "anything else in this section.");
+
+            PivotStockWeight = cfg.Bind(S_PIVOT, "Blend toward the shouldered centre", 0f, new ConfigDescription(
+                "0 turns about the hands always - the right hand is the axis, which is what was " +
+                "asked for. 1 uses the braced centre, which is the stock Tarkov feel. In between " +
+                "blends the two.\n" +
+                "\n" +
+                "Only does anything when the switch above is on.",
+                new AcceptableValueRange<float>(0f, 1f)));
+
             GunRollEnabled = cfg.Bind(S_PIVOT, "Gun rolls as it swings", false,
                 "Cants the weapon while it swings, the way your wrist rolls when the support hand " +
                 "leads the gun around. Turn right and it rolls clockwise; turn left and it rolls " +
@@ -465,35 +489,33 @@ namespace SPTFreeAim
                 "lens-glare effect can be switched back on depends on what that shader still " +
                 "carries. Turn this on, aim down a scope, and send me the log lines.");
 
-            KeepPeripheralVision = cfg.Bind(S_BODY, "Keep peripheral vision when aiming - does not work", false,
-                "DOES NOT WORK on this build and the switch is left only so the reason is " +
-                "visible rather than mysterious. CameraManager.AimDeltaFov turned out to be a " +
-                "CONST float of 15 - writing it throws, and the game has 15 compiled into every " +
-                "place it uses it, so even a successful write would do nothing. The HUD says so " +
-                "too. Doing this properly means going through CameraManager.Fov instead; ask and " +
-                "I will. See docs/07-FINDINGS.md F29.\n" +
+            KeepFovWhenAiming = cfg.Bind(S_BODY, "Keep your field of view when aiming", false,
+                "Tarkov narrows the view by fifteen degrees the moment the weapon comes up. It is " +
+                "meant to read as leaning into the sight, and under free aim it is wrong twice " +
+                "over: your head has not moved, and the gun is no longer nailed to the middle of " +
+                "the screen for you to lean toward.\n" +
                 "\n" +
-                "ORIGINAL DESCRIPTION FOLLOWS.\n" +
-                "Keep your peripheral vision when the weapon comes into the shoulder.\n" +
+                "On, the view stays where it was. The zoom is not subtracted - the view is put back " +
+                "to the game's own un-aimed value, so it stays correct if BSG ever changes that " +
+                "number.\n" +
                 "\n" +
-                "Tarkov narrows the field of view as you aim, which reads as closing one eye and " +
-                "tunnelling on the sight. A shooter with both eyes open does not lose the room " +
-                "around the sight. This scales CameraManager.AimDeltaFov, the game's own " +
-                "aim-narrowing amount, so nothing else about the sight picture changes - the optic " +
-                "and the reticle are exactly where the game puts them.\n" +
-                "\n" +
-                "It does mean no free zoom on magnified optics, because the narrowing is what that " +
-                "zoom IS. Back the strength off below if you want some of it back.\n" +
-                "\n" +
-                "SEPARATE from the optic housing setting above, and off by default: this one was " +
-                "my guess at what the thread asked for before I could read it, and the thread was " +
-                "about the housing. It is a reasonable thing to want on its own, so it stays.");
+                "This replaces the old peripheral-vision switch, which never worked and could not " +
+                "have: it wrote CameraManager.AimDeltaFov, a const that nothing in the game reads. " +
+                "See docs/07-FINDINGS.md F38.");
 
-            PeripheralStrength = cfg.Bind(S_BODY, "Peripheral vision strength", 1f, new ConfigDescription(
-                "1.0 removes the aim narrowing entirely - full peripheral vision, no tunnel. " +
-                "0.0 is stock Tarkov. 0.5 keeps half of it, which is a reasonable middle if " +
-                "losing the magnification on scopes bothers you.",
-                new AcceptableValueRange<float>(0f, 1f)));
+            ZoomOnHoldBreath = cfg.Bind(S_BODY, "Zoom in when holding breath", true,
+                "Give the zoom back while you hold your breath - now you really are putting your " +
+                "eye to the sight and focusing on the target, and it costs stamina to do it.\n" +
+                "\n" +
+                "It moves to whatever the game itself wanted while aiming, so an optic still goes " +
+                "to its own magnification rather than a flat fifteen degrees.\n" +
+                "\n" +
+                "Only does anything when the switch above is on.");
+
+            ZoomTime = cfg.Bind(S_BODY, "Zoom transition (s)", 0.25f, new ConfigDescription(
+                "How long the lean-in takes. The game uses a full second for shouldering; this is " +
+                "quicker because holding your breath is a deliberate act, not a posture change.",
+                new AcceptableValueRange<float>(0.01f, 2f)));
 
             // -- debug --
             ShowHud = cfg.Bind(S_DEBUG, "Show HUD", true,
