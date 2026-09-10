@@ -341,7 +341,11 @@ namespace SPTFreeAim.Patches
             catch (Exception e)
             {
                 Plugin.Log.LogError("Lens glare failed, switching it off: " + e);
-                cfg.GlareEnabled.Value = false;
+                // Neutralise the dials rather than flipping a switch that no
+                // longer exists: 1.0 bloom IS stock, and zero is off for the rest.
+                cfg.GlareBloom.Value = 1f;
+                cfg.GlareDirt.Value = 0f;
+                cfg.GlareChromatic.Value = 0f;
                 GameRefs.ReleasePrism();
             }
 
@@ -402,7 +406,7 @@ namespace SPTFreeAim.Patches
             ComputeBodyLean(applied.x, st.AimBlend, cfg);
 
             bool doCompensate = tuning.Mode == DriveMode.Compensate && cfg.ApplyCameraOffset.Value;
-            bool doLean = cfg.BodyLeanEnabled.Value;
+            bool doLean = cfg.BodyLeanActive;
             bool doCamera = doCompensate || doLean;
             bool doWeapon = cfg.ApplyWeaponOffset.Value;
             bool doPose = cfg.LoweredPoseEnabled.Value && cfg.StanceGateEnabled.Value;
@@ -631,7 +635,7 @@ namespace SPTFreeAim.Patches
         /// </summary>
         private static void ComputeBodyLean(float yawOffset, float aimBlend, FreeAimConfig cfg)
         {
-            if (!cfg.BodyLeanEnabled.Value) { LastLean = 0f; return; }
+            if (!cfg.BodyLeanActive) { LastLean = 0f; return; }
 
             float blend = Mathf.Clamp01(aimBlend);
             float t = SwingFraction(yawOffset, blend, cfg);
@@ -893,7 +897,7 @@ namespace SPTFreeAim.Patches
         /// </summary>
         private static void ApplyLensGlare(FreeAimConfig cfg)
         {
-            if (!cfg.GlareEnabled.Value)
+            if (!cfg.GlareActive)
             {
                 if (_glareDriving) { _glareDriving = false; GameRefs.ReleasePrism(); }
                 return;

@@ -115,6 +115,18 @@ namespace SPTFreeAim
             FreeAimPatches.Apply(_harmony = new Harmony(GUID));
             RecoilPatch.Apply(_harmony);
 
+            // Two config files, neither able to see the other, is a collision no
+            // amount of care inside either one can catch. So compare them. F47.
+            Compat.KeyConflicts.CheckOnce(
+                new System.Collections.Generic.KeyValuePair<string, BepInEx.Configuration.KeyboardShortcut>(
+                    "Master toggle key", Cfg.ToggleKey.Value),
+                new System.Collections.Generic.KeyValuePair<string, BepInEx.Configuration.KeyboardShortcut>(
+                    "Stance key", Cfg.StanceKey.Value),
+                new System.Collections.Generic.KeyValuePair<string, BepInEx.Configuration.KeyboardShortcut>(
+                    "HUD toggle key", Cfg.HudKey.Value),
+                new System.Collections.Generic.KeyValuePair<string, BepInEx.Configuration.KeyboardShortcut>(
+                    "Yaw write probe key", Cfg.ProbeWriteKey.Value));
+
             Log.LogInfo(NAME + " " + VERSION + " loaded. Mode: " + Cfg.Mode.Value +
                         ". F12 to configure, F8 master toggle, F9 HUD, F10 write probe.");
 

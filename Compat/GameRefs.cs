@@ -473,11 +473,60 @@ namespace SPTFreeAim.Compat
 
         // ================= Arm fatigue ===================================
 
+        private static Type _boundPlayerType;
+        private static bool _physicalReported;
+
+        /// <summary>
+        /// Player.Physical, bound on first use.
+        ///
+        /// This was the whole of the arm-drain bug and half of the hold-breath
+        /// one: Member.Get does NOT bind on demand, and nothing anywhere called
+        /// M_Physical.Bind. So every read returned null, both features quietly did
+        /// nothing, and the only symptom was the HUD saying "hands pool not
+        /// reached yet" - which reads like the pool being late, not absent
+        /// (docs/07-FINDINGS.md F45).
+        ///
+        /// Exactly F29's shape: an unresolved Member is indistinguishable from a
+        /// member that is legitimately null, and neither one throws. So this logs
+        /// once, either way, rather than failing in silence a third time.
+        /// </summary>
+        private static object GetPhysical(object player)
+        {
+            if (player == null) return null;
+
+            Type plt = player.GetType();
+            if (plt != _boundPlayerType)
+            {
+                _boundPlayerType = plt;
+                _physicalReported = false;
+                M_Physical.Bind(plt);
+            }
+
+            if (!M_Physical.Resolved)
+            {
+                if (!_physicalReported)
+                {
+                    _physicalReported = true;
+                    Plugin.Log.LogWarning("Player.Physical not found on " + plt.Name +
+                        " - arm drain and hold-breath zoom are both unavailable on this build.");
+                }
+                return null;
+            }
+
+            object phys = M_Physical.Get(player);
+            if (phys != null && !_physicalReported)
+            {
+                _physicalReported = true;
+                Plugin.Log.LogInfo("Physical: " + M_Physical.Describe() + " on " + plt.Name);
+            }
+            return phys;
+        }
+
         private static object GetHandsPool(object player)
         {
             if (player == null) return null;
 
-            object phys = M_Physical.Get(player);
+            object phys = GetPhysical(player);
             if (phys == null) return null;
 
             Type pt = phys.GetType();
@@ -1352,7 +1401,7 @@ namespace SPTFreeAim.Compat
         public static bool IsHoldingBreath(object player)
         {
             if (player == null) return false;
-            object phys = M_Physical.Get(player);
+            object phys = GetPhysical(player);
             if (phys == null) return false;
 
             Type pt = phys.GetType();

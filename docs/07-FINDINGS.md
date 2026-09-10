@@ -1753,6 +1753,10 @@ sure.
 
 ## F29. Three bugs, one log, and an error handler that repeated the error
 
+> **Repeated as F45.** The unbound-Member half of this happened again to
+> `M_Physical`, killing arm drain and the hold-breath zoom. `tests/BindTests.cs`
+> now scans for Members that are read but never bound.
+
 > **Corrected by F38.** The const diagnosis is right but stops one question
 > short: `AimDeltaFov` is not read by anything at all, so a writable field would
 > have changed nothing either. The FOV seam is `CameraManager.SetFov`.
@@ -3054,3 +3058,310 @@ That is not a flaw in the test, it is the boundary of what a text-scanning test
 can know. It does mean the build is the only thing standing between a bad edit and
 a broken DLL, which is exactly the F31 situation: build every time, and check the
 artefact's size and timestamp rather than trusting that a command ran.
+
+---
+
+## F44. A master switch above a row of dials is a trap
+
+*"none of the things that you listed here worked, no effect."*
+
+He was right that nothing happened, and it was not a bug. His config file:
+
+```
+Lens glare                = false     <- master OFF
+  Glare: bloom            = 5         <- cranked to maximum
+  Glare: lens dirt        = 3         <- cranked to maximum
+  Glare: colour fringing  = 2         <- cranked to maximum
+
+Body leans as you swing   = false     <- master OFF
+  Body lean aimed (deg)   = 4
+  Body lean at low ready  = 1.5
+
+Shoulder give (m)         = 0         <- never set
+Log the optic setup       = false     <- never run
+```
+
+He found every dial, set every one of them, and never flipped either switch. And
+the mod was doing exactly what it was told.
+
+### Why he was going to do that
+
+**The dials look like the feature; the switch looks like a preference.** In a
+config list of eighty-odd entries, `Glare: bloom` reads as the thing that makes
+glare happen and `Lens glare` reads as an option about it. Setting bloom to 5 and
+seeing nothing then looks like a broken mod, not an unset boolean - and there is
+nothing on screen to say otherwise unless the HUD happens to be up.
+
+I did this three times: lens glare, body lean, gun roll. And I had already built
+the correct shape once without noticing - **`Shoulder give (m)` has no master
+switch, because 0 metres already means off.**
+
+### The fix is to delete the switches
+
+`Lens glare` and `Body leans as you swing` are gone. Both are now derived from
+their own numbers:
+
+```csharp
+GlareActive     => bloom != 1.0 || dirt > 0 || fringing > 0
+BodyLeanActive  => leanAimed != 0 || leanReady != 0
+```
+
+Bloom defaults to **1.0**, which is stock Tarkov and therefore the off position.
+The lean degrees default to **0**. There is nothing to remember, nothing to pair,
+and no way to set a value that provably cannot act.
+
+That also removes a class of state the error handlers had to manage: the glare
+handler used to write `enabled = false`, and now neutralises the dials instead,
+which is the same thing said once rather than twice.
+
+### The diagnosis came from his own screen
+
+The HUD rows read `body lean off`, `shoulder give off`, `lens glare off` in the
+video he sent, and the config file agreed. Two independent sources, no guessing,
+and the answer was available before a single line of code was read.
+
+That is the payoff for the rule this project keeps relearning: **make the machine
+say what it is doing.** Every one of F29, F31, F33 and F42 was a case of a feature
+silently doing nothing; the difference this time is it took one frame of video to
+know it.
+
+### The lesson worth keeping
+
+**If a setting can be configured into a state where it provably does nothing, the
+design is wrong, not the user.** A value that means "nothing" is a better off
+switch than a boolean, because it cannot disagree with the value next to it.
+
+---
+
+## F45. Nobody ever bound Player.Physical
+
+The HUD read `hands pool not reached yet` for the whole raid. That wording is part
+of why it went unexamined for so long: it sounds like the pool arriving late, not
+like the pool being unreachable forever.
+
+`Compat/Member.Get` does **not** bind on demand. An unresolved Member returns null
+from every read, does not throw, and is indistinguishable from a member that is
+legitimately null. And:
+
+```
+grep -c "M_Physical.Bind" Compat/GameRefs.cs
+0
+```
+
+Never bound. Not once, anywhere. So `Player.Physical` read as null on every frame
+since the rollback, and `GetHandsPool` returned at its first line.
+
+The member names were all correct - `Player.Physical : PhysicalBase` is a field,
+`PhysicalBase.HandsStamina : Stamina` is a field, both confirmed against the
+assembly. Nothing was misnamed. The lookup simply never started.
+
+### It was two features, not one
+
+`IsHoldingBreath` reads `M_Physical` too, so the hold-breath zoom added in F38 has
+never fired either. The owner has `Zoom in when holding breath = true` in his
+config and has presumably been holding his breath and seeing nothing.
+
+Two features, one missing line, no error in the log from either.
+
+Both now go through `GetPhysical(player)`, which binds against the player's type
+on first use and logs once - success or failure - so a third feature reaching for
+Physical cannot inherit the same silence.
+
+### This is F29 exactly
+
+F29 was `M_CurrentScope` never bound, which made every optic effect inert while
+the log stayed clean. Same failure, same cause, same silence, sixteen findings
+apart.
+
+Twice is a pattern, and this one is visible in the source: if a file contains
+`M_Foo.Get(` but never `M_Foo.Bind(`, that member can never resolve. So
+`tests/BindTests.cs` scans for exactly that. It reports 29 Members declared, 29
+read, 29 bound.
+
+### The regression test that passed on the bug
+
+Worth recording, because it nearly shipped hollow.
+
+The first attempt at proving `BindTests` catches this reintroduced the bug by
+**commenting out** the `M_Physical.Bind` call. The test passed - the regex matched
+the commented text and counted a dead call as a live one.
+
+A scanner that reads dead code as live code is worse than no scanner: it reports
+confidence it has not earned, which is precisely how a test goes hollow while
+still showing green (F13's lesson, in a new place). `BindTests` now strips
+comments before scanning, and is verified against both a commented-out bind and a
+deleted one.
+
+### The lesson worth keeping
+
+**"Not yet" and "never" look identical from the outside, and the wording of a
+diagnostic decides which one you go looking for.** `hands pool not reached yet`
+described a race. The truth was a missing line. A message saying "Player.Physical
+not found" would have been read on the first raid.
+
+Diagnostics are not decoration - they are the hypothesis the next person starts
+from, and a diagnostic that suggests the wrong hypothesis costs more than none.
+
+---
+
+## F46. My own error message hid the error, and three mods own Prism
+
+*"none of the lense effect worked"*
+
+This time I read his log before writing a line, and it says the code ran:
+
+```
+[SPT Free Aim] Lens glare: driving PrismEffects. 7 of 7 fields found, lens dirt texture PRESENT.
+```
+
+Seven of seven fields resolved, dirt texture present, no exception. The feature is
+running. Something else is eating it.
+
+### Three other mods patch PrismEffects on this install
+
+```
+Harmony id=AmandsGraphicsPrismEffectsPatch   -> PrismEffects::OnEnable  postfix
+Harmony id=PrismEffectsPatch (SmajlecLights) -> PrismEffects::Awake     postfix
+Harmony id=AmandsSensePrismEffectsPatch      -> PrismEffects::OnEnable  postfix
+```
+
+And Amands Graphics carries its own settings for the exact fields this drives:
+
+```
+com.Amanda.Graphics.cfg:
+    Bloom Intensity      = 0.5
+    ChromaticAberration  = 0.5
+```
+
+Which is a strong hypothesis and **not** a finding. There are two different worlds
+consistent with what the owner sees, and guessing between them is how the last six
+findings went wrong:
+
+- our write lands and is then overwritten, or
+- our write survives and Amands renders bloom through its own chain, so
+  PrismEffects' own bloom is simply not what is on screen
+
+So `VerifyPrismStuck` now writes, reads the value back, and logs which world we are
+in. That is F34's rule one level further out: **an API call that succeeds is not an
+API call that did something, and a field that accepts a value is not a field that
+keeps it.**
+
+### The depth of field was failing, silently, for a whole raid
+
+Also in the same log, twice:
+
+```
+[Warning:SPT Free Aim] Depth of field: TargetInvocationException while writing - giving up
+[Info   :SPT Free Aim] Depth of field: driving ... enabled=False, focalTransform=none
+```
+
+Fail, give up, re-resolve, fail again. So the gun blur has not been working either,
+and the owner never mentioned it because the message did not look like a failure of
+anything he could see.
+
+**And my message is useless.** `TargetInvocationException` is what reflection throws
+when the *target* throws - it names the messenger, never the message. I wrote that
+handler myself and it discarded the only part worth having.
+
+Fixed two ways:
+
+- `Explain()` unwraps `TargetInvocationException` down to the real inner exception,
+  and every reflection handler in `GameRefs` now uses it.
+- `DriveDepthOfField` records which field it was writing, so the log names the
+  member that threw rather than the method.
+
+The prime suspect is already visible in the stock capture: `enabled=False`, and
+`enabled` is the one **property** in that method, the only call that can produce a
+TargetInvocationException at all. A destroyed component throws from
+`Behaviour.enabled`. Next log will say so outright instead of implying it.
+
+### The lesson worth keeping
+
+**A diagnostic that names the mechanism instead of the cause is worse than none.**
+"TargetInvocationException while writing" reads like a real report, passes review,
+and tells you nothing - the same failure as F45's "hands pool not reached yet",
+which described a race that was actually a missing line.
+
+Two findings running where the bug was findable in seconds and the message sent me
+somewhere else. The rule for this codebase now: **if a catch block logs an
+exception type, it must unwrap it, and it must say what was being attempted.**
+
+---
+
+## F47. Two config files that cannot see each other
+
+*"Why when I turn on pistol the free aim mod turns off?"*
+
+Asked twice. The first time (F42) the answer was `EmergencyDisable` firing on a
+single exception, and that fix was right but it was not this. This time the log has
+no exceptions at all - and it has this:
+
+```
+[SPT Free Aim] Free aim ON
+[SPT Free Aim] Free aim OFF
+```
+
+Adjacent lines. That is the MASTER TOGGLE, logging itself, exactly as designed.
+The mod was not failing. It was being switched off.
+
+His config:
+
+```
+kfmstr.sptfreeaim.cfg:   Master toggle key = Alpha1
+```
+
+Tarkov's:
+
+```
+Control.ini:   SecondaryWeapon      = Alpha1
+               QuickSecondaryWeapon = Alpha1
+```
+
+`SecondaryWeapon` is the holster. **Drawing his pistol pressed the mod's master
+toggle**, every single time, and the only trace was a log line that looked like a
+deliberate keypress.
+
+Nothing was broken. Two files each held a defensible value and neither could see
+the other.
+
+### The check pays for itself immediately
+
+`Compat/KeyConflicts.cs` reads Tarkov's control file at startup and compares every
+hotkey the mod owns. Run against his actual bindings it found **two** clashes, and
+the second one was mine:
+
+```
+Master toggle key = Alpha1  ->  SecondaryWeapon, QuickSecondaryWeapon
+Stance key        = Z       ->  DropBackpack
+Stance key DEFAULT = X      ->  Prone            <- shipped that way
+```
+
+The default stance key was `X`, which is Prone in stock Tarkov. Every user who
+took the default has been going prone whenever they changed stance, and nobody
+reported it because it reads as fumbling the key.
+
+Hunting for a replacement found the real shape of the problem: **almost nothing
+near WASD is free in stock Tarkov.** X prone, Z drop backpack, C crouch, V weapon
+mounting, B fire mode, T tactical, R reload, F interact, G grenade, Q/E lean.
+Default is now `M`, verified free, and the description says so rather than
+pretending a good answer exists.
+
+### Parsing without a parser
+
+The file is JSON despite the `.ini` extension, and this deliberately does not parse
+it as JSON. A regex over the text cannot throw on a schema change, and a startup
+diagnostic is not worth a hard dependency or any chance of taking the plugin down
+(F30). The regex was verified against his real file before shipping - it correctly
+resolves `Alpha1 -> SecondaryWeapon, QuickSecondaryWeapon` and `X -> Prone`.
+
+### The lesson worth keeping
+
+**When a system has two sources of truth that cannot see each other, something has
+to read both.** No amount of care inside either config prevents this class; the
+collision only exists in the space between them.
+
+And note what made it findable: the toggle already logged itself. Without those two
+lines this would have looked exactly like the F42 crash and I would have gone
+hunting for an exception that was not there. That is now three findings running
+(F44, F45, F46, this) where the answer was already in the log or on the HUD, and
+the work was reading it rather than reasoning about it.

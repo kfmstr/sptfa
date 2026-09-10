@@ -99,12 +99,36 @@ namespace SPTFreeAim
         public ConfigEntry<bool> InvertGunRoll;
         public ConfigEntry<bool> GunRollAboutView;
         public ConfigEntry<float> ShoulderGive;
-        public ConfigEntry<bool> GlareEnabled;
+
+        // No master switches for these two. A master bool sitting above a row of
+        // dials looks optional, and the dials look like the feature - so the dials
+        // get turned up and the switch never gets flipped, and the owner is left
+        // with a set of settings that provably do nothing (docs/07-FINDINGS.md
+        // F44). Every one of these is derived from its own numbers instead, the
+        // way "Shoulder give" always was: a value that means "nothing" IS the off
+        // switch, and there is only one thing to set.
+        public bool GlareActive
+        {
+            get
+            {
+                return Mathf.Abs(GlareBloom.Value - 1f) > 0.01f
+                    || GlareDirt.Value > 0.001f
+                    || GlareChromatic.Value > 0.001f;
+            }
+        }
+
+        public bool BodyLeanActive
+        {
+            get
+            {
+                return Mathf.Abs(BodyLeanAimed.Value) > 0.01f
+                    || Mathf.Abs(BodyLeanReady.Value) > 0.01f;
+            }
+        }
         public ConfigEntry<float> GlareBloom;
         public ConfigEntry<float> GlareThreshold;
         public ConfigEntry<float> GlareDirt;
         public ConfigEntry<float> GlareChromatic;
-        public ConfigEntry<bool> BodyLeanEnabled;
         public ConfigEntry<float> BodyLeanAimed;
         public ConfigEntry<float> BodyLeanReady;
         public ConfigEntry<bool> InvertBodyLean;
@@ -295,8 +319,9 @@ namespace SPTFreeAim
             // -- stance --
             StanceGateEnabled = cfg.Bind(S_STANCE, "Gate on weapon ready", true,
                 "[docs/04-DECISIONS.md D6] Free aim only when the weapon is up. Off means always on.");
-            StanceKey = cfg.Bind(S_STANCE, "Stance key", new KeyboardShortcut(KeyCode.X),
-                "Raises and lowers the weapon.");
+            StanceKey = cfg.Bind(S_STANCE, "Stance key", new KeyboardShortcut(KeyCode.M),
+                "Raises and lowers the weapon.\n\n" +
+                "Defaulted to M because almost nothing near WASD is free in stock Tarkov: X is Prone, Z drops your backpack, C crouches, V is weapon mounting, B is fire mode, T and R and F are all taken. If you rebind this, watch the startup log - the mod compares its own hotkeys against Tarkov's control file and warns on a clash (F47).");
             StanceHoldToReady = cfg.Bind(S_STANCE, "Hold to ready", false,
                 "[Q3] Off = press to toggle (recommended). On = weapon drops on key release.");
             GateSpeed = cfg.Bind(S_STANCE, "Gate transition speed (1/s)", 4f, new ConfigDescription(
@@ -504,21 +529,18 @@ namespace SPTFreeAim
                 "low ready, with the muzzle at the floor, it reads as a twist rather than a cant. " +
                 "Use it only if the barrel axis turns out to be wrong on some weapon.");
 
-            GlareEnabled = cfg.Bind(S_BODY, "Lens glare", false,
-                "Light scattering off the glass, the way it does on a camera lens or through an " +
-                "optic.\n" +
+            GlareBloom = cfg.Bind(S_BODY, "Glare: bloom", 1f, new ConfigDescription(
+                "Light scattering off the glass, the way it does on a camera lens.\n" +
                 "\n" +
-                "This drives Prism, which Tarkov already runs on the camera - CameraManager holds " +
-                "one and the game writes to it itself for noise, auto exposure and the near-miss " +
-                "vignette. So this is the same move as the gun blur: turn up what is already in the " +
-                "render order rather than stacking another pass on top of it. See F43.\n" +
+                "A MULTIPLIER on the game's own bloom, so 1.0 is stock Tarkov and IS the off " +
+                "position - there is no separate switch to remember. Around 1.5 to 2 gives " +
+                "highlights that bleed the way they do through a lens; past 3 the whole screen " +
+                "hazes over.\n" +
                 "\n" +
-                "Every value it touches is captured first and handed back when it stops.");
-
-            GlareBloom = cfg.Bind(S_BODY, "Glare: bloom", 1.6f, new ConfigDescription(
-                "A MULTIPLIER on the game's own bloom, so 1.0 is stock Tarkov and the dial means " +
-                "something you can picture. Around 1.5 to 2 gives highlights that bleed the way " +
-                "they do through a lens; past 3 the whole screen starts to haze over.",
+                "This drives Prism, which Tarkov already runs on the camera and already writes to " +
+                "itself for noise, auto exposure and the near-miss vignette. Same move as the gun " +
+                "blur: turn up what is already in the render order. Everything it touches is " +
+                "captured first and handed back. See F43.",
                 new AcceptableValueRange<float>(0f, 5f)));
 
             GlareThreshold = cfg.Bind(S_BODY, "Glare: threshold", 0f, new ConfigDescription(
@@ -542,24 +564,18 @@ namespace SPTFreeAim
                 "notice as a headache long before they notice it as realism.",
                 new AcceptableValueRange<float>(0f, 2f)));
 
-            BodyLeanEnabled = cfg.Bind(S_BODY, "Body leans as you swing", false,
+            BodyLeanAimed = cfg.Bind(S_BODY, "Body lean aimed (deg)", 0f, new ConfigDescription(
                 "The counterbalance. Swing the weapon right and your torso leans LEFT - the mass " +
-                "goes one way and the spine goes the other to keep the weight over your feet.\n" +
+                "goes one way and the spine goes the other to keep the weight over your feet. On a " +
+                "bodycam it reads as the horizon tipping through every turn.\n" +
                 "\n" +
-                "On a bodycam this reads as the horizon tipping as the shooter turns, and it is " +
-                "most of what makes that footage feel like a person carrying a rifle rather than a " +
-                "camera on a tripod. It stops when you stop, on the same spring as everything else, " +
-                "so it settles level about a second after you do.\n" +
-                "\n" +
-                "Off by default. Turn it on and swing before touching the numbers.");
-
-            BodyLeanAimed = cfg.Bind(S_BODY, "Body lean aimed (deg)", 4f, new ConfigDescription(
-                "How far the view tips at the hard cap while shouldered. This one wants to be " +
-                "SMALL - a few degrees is a person bracing, ten is a person falling over, and it " +
-                "is the horizon so you notice it far more than you expect.",
+                "This is how far the view tips at the hard cap while shouldered. ZERO IS OFF - " +
+                "there is no separate switch. Start at 4 and go DOWN if anything: it is the " +
+                "horizon, and the eye catches a tilted horizon far faster than a tilted gun. Ten " +
+                "degrees is not a shooter bracing, it is a shooter falling over.",
                 new AcceptableValueRange<float>(-30f, 30f)));
 
-            BodyLeanReady = cfg.Bind(S_BODY, "Body lean at low ready (deg)", 1.5f, new ConfigDescription(
+            BodyLeanReady = cfg.Bind(S_BODY, "Body lean at low ready (deg)", 0f, new ConfigDescription(
                 "The same, at low ready, where it only starts once the swing has taken up the " +
                 "slack in your arms. Smaller again: a weapon held loose does not load the spine " +
                 "the way a shouldered one does.",
