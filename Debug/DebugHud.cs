@@ -139,6 +139,17 @@ namespace SPTFreeAim.Debugging
                 Row("hotkeys", Compat.KeyConflicts.Report.StartsWith("no clashes")
                         ? Compat.KeyConflicts.Report
                         : "<color=#ff6666>" + Compat.KeyConflicts.Report + "</color>") +
+                Row("keys moved", Compat.KeyConflicts.Moved.Count == 0
+                        ? "-"
+                        : "<color=#ffcc55>" + string.Join("   ", Compat.KeyConflicts.Moved.ToArray()) + "</color>") +
+                Row("aim tap", cfg.AimTapWindow.Value > 0.0001f
+                        ? string.Format("<color=#7fd1b9>tap under {0:F2}s = ready</color>   last press {1:F2}s",
+                              cfg.AimTapWindow.Value, p.Stance.LastRmbHeld)
+                        : "off") +
+                Row("stance key", Compat.KeyConflicts.IsBlocked("Stance key")
+                        ? "<color=#ff6666>IGNORED - " + Compat.KeyConflicts.Why("Stance key") + "</color>"
+                        : cfg.StanceKey.Value.MainKey.ToString()
+                          + (cfg.StanceGateEnabled.Value ? "" : "   <color=#ffcc55>gate off</color>")) +
                 Row("master toggle", Compat.KeyConflicts.IsBlocked("Master toggle key")
                         ? "<color=#ff6666>IGNORED - " + Compat.KeyConflicts.Why("Master toggle key") + "</color>"
                         : cfg.ToggleKey.Value.MainKey.ToString()) +
@@ -158,8 +169,8 @@ namespace SPTFreeAim.Debugging
             // Wider and taller than it looks like it needs: the optic glass row
             // now carries seven numbers plus the isolation report, and a clipped
             // HUD is a HUD you stop trusting. The sight row added one line.
-            GUI.Box(new Rect(10, 10, 800, 470), GUIContent.none, _boxStyle);
-            GUI.Label(new Rect(20, 18, 780, 454), "<b>SPT Free Aim</b>\n\n" + body, _style);
+            GUI.Box(new Rect(10, 10, 800, 520), GUIContent.none, _boxStyle);
+            GUI.Label(new Rect(20, 18, 780, 504), "<b>SPT Free Aim</b>\n\n" + body, _style);
         }
 
 

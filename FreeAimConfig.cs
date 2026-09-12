@@ -53,6 +53,7 @@ namespace SPTFreeAim
         // ---- Stance ------------------------------------------------------
         public ConfigEntry<bool> StanceGateEnabled;
         public ConfigEntry<KeyboardShortcut> StanceKey;
+        public ConfigEntry<float> AimTapWindow;
         public ConfigEntry<bool> StanceHoldToReady;
         public ConfigEntry<float> GateSpeed;
         public ConfigEntry<bool> LoweredPoseEnabled;
@@ -328,6 +329,21 @@ namespace SPTFreeAim
             // -- stance --
             StanceGateEnabled = cfg.Bind(S_STANCE, "Gate on weapon ready", true,
                 "[docs/04-DECISIONS.md D6] Free aim only when the weapon is up. Off means always on.");
+            AimTapWindow = cfg.Bind(S_STANCE, "Ready on a right-mouse tap (s)", 0.2f, new ConfigDescription(
+                "A quick TAP of the aim button drops the weapon to low ready, or brings it back up. " +
+                "HOLDING it aims exactly as it always did.\n" +
+                "\n" +
+                "This is the length of a tap. Release inside this many seconds counts as a tap; " +
+                "anything longer is an aim and is ignored. 0.2 is a comfortable flick. Lower it if " +
+                "you toggle by accident, raise it if your taps are being read as aims.\n" +
+                "\n" +
+                "0 turns it off, and then only the stance key below does this.\n" +
+                "\n" +
+                "Nothing is intercepted: the game still sees every press, so a tap also flicks the " +
+                "sights up for an instant. That is the cost of sharing the button and it reads as a " +
+                "quick sight check. Ignored while the inventory or a menu has the mouse.",
+                new AcceptableValueRange<float>(0f, 1f)));
+
             StanceKey = cfg.Bind(S_STANCE, "Stance key", new KeyboardShortcut(KeyCode.M),
                 "Raises and lowers the weapon.\n\n" +
                 "Defaulted to M because almost nothing near WASD is free in stock Tarkov: X is Prone, Z drops your backpack, C crouches, V is weapon mounting, B is fire mode, T and R and F are all taken. If you rebind this, watch the startup log - the mod compares its own hotkeys against Tarkov's control file and warns on a clash (F47).");

@@ -4489,3 +4489,88 @@ session and only when sight transparency is on. Neither is on the frame path.
 wired, costs nothing at zero, and is documented as unachievable through a shader
 swap - which makes it a judgement call about a FEATURE rather than dead code, and
 that is the owner's call to make, not a sweep's.
+
+---
+
+## F63. A dead key is worse than a shared one
+
+*"some how I turned off the free aim, and cannot make it work, my getting ready
+button doesn't work."*
+
+Free aim was never off - his config read `Enabled = true` and the master toggle
+was already on F8, which Tarkov leaves free. The log named the real fault in the
+second line it printed:
+
+```
+KEY CLASH - one of this mod's hotkeys is a key Tarkov already uses.
+These mod hotkeys are now IGNORED so the game's action is the only one:
+    "Stance key" is on Z, which Tarkov also uses for: DropBackpack
+```
+
+F57 made a clashing hotkey inert. That was right for the master toggle, where a
+shared key silently switches the whole mod off and three rounds were lost to it.
+It was wrong applied to everything else, and I applied it to everything else in
+the same edit without asking whether the reasoning carried.
+
+It does not carry. The master toggle case is special because the failure is
+SILENT and GLOBAL. A stance key that also drops your backpack is loud and local:
+you would notice immediately and could decide for yourself. Making it dead
+instead removed the decision and left one warning line in a log nobody reads
+mid-raid.
+
+Letting Z through would have been worse - every trip to low ready dropping the
+backpack is a real loss in a real raid. So the answer was neither of the two I
+had considered. **Ignore and allow are not the only options; move is one too.**
+
+Every clashing hotkey is now relocated onto a key Tarkov does not use, saved, and
+announced in the log and on the HUD, with the inert behaviour kept only as the
+fallback when no free key exists. His stance key becomes M.
+
+Tarkov leaves very little: **J** and **M** of the letters, the twelve F-keys, and
+most punctuation. 46 distinct keys are already bound. A mod that wants a hotkey
+on this game has to either take a function key or move in next to the punctuation,
+and picking a letter that "looks free" is how this happened twice.
+
+### The orphan
+
+`High ready key = C` sits in his config and nothing in the code reads it - a
+leftover from a build where that feature existed. BepInEx never removes entries
+it no longer recognises, so a deleted setting looks exactly like a live one from
+the outside. Worth remembering the next time a dial appears not to work: check
+that the code still has it, not just that the config does.
+
+---
+
+## F64. Two gestures on one button
+
+The owner, immediately after losing his stance key: *"can you make on click right
+mouse it is on and off, on press of the right mouse it is aiming."*
+
+Asked rather than guessed, because "on and off" could have meant the ready state,
+the whole mod, or just the coupling, and building the wrong one costs a raid. It
+was the ready state, with a 200 ms tap window.
+
+```
+release under 200 ms   -> low ready toggles
+held longer            -> aims, untouched
+```
+
+The implementation observes and never intercepts: `Input.GetMouseButtonDown(1)`
+and `GetMouseButtonUp(1)`, a timestamp, and nothing else. The game still receives
+every press and still aims. A tap therefore flicks the sights up for an instant,
+which is the honest cost of sharing a button and reads as a quick sight check;
+suppressing the input to avoid it would mean fighting the game for its own aim
+control, which is a much worse trade.
+
+Three details that matter more than the gesture:
+
+* **`Time.unscaledTime`, not `Time.time`.** A hitch, a pause or any timescale
+  change would otherwise stretch or compress the window and turn aims into taps.
+* **Gated on the inventory probe.** Without it, closing a container with the right
+  mouse button would drop the weapon to low ready.
+* **The window IS the switch.** Zero is off, so there is no separate bool to leave
+  unflipped - F44's rule, applied from the start this time rather than after the
+  fact.
+
+The key route and the tap route set the same flag, so they are alternatives
+rather than rivals and neither has to know about the other.

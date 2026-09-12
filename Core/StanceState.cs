@@ -60,6 +60,50 @@ namespace SPTFreeAim.Core
             _keyHeldLast = held;
         }
 
+        private float _rmbDownAt = -1f;
+
+        /// <summary>Last right-mouse press duration, in seconds, for the HUD.</summary>
+        public float LastRmbHeld;
+
+        /// <summary>
+        /// A TAP of the aim button toggles low ready; a HOLD aims, untouched.
+        ///
+        /// The two gestures live on one button because that is where the hand
+        /// already is, and because Tarkov leaves almost no keys free - the owner's
+        /// stance key had to be moved off Z after it turned out to be DropBackpack
+        /// (F63). Nothing here intercepts or suppresses the button: the game still
+        /// sees every press and still aims. We only measure how long it was held
+        /// and act on the short ones.
+        ///
+        /// A tap therefore also produces a brief flick of the sights, which is
+        /// unavoidable without stealing the input, and reads as a quick sight
+        /// check rather than a bug.
+        ///
+        /// <paramref name="window"/> of zero is off, the same way every other dial
+        /// in this mod treats zero, so there is no separate switch to forget.
+        /// </summary>
+        public void ReadAimTap(float window, bool allowed)
+        {
+            if (window <= 0.0001f) { _rmbDownAt = -1f; return; }
+
+            // Blocked while a menu or the inventory owns the mouse, otherwise
+            // closing a container would drop the weapon to low ready.
+            if (!allowed) { _rmbDownAt = -1f; return; }
+
+            if (UnityEngine.Input.GetMouseButtonDown(1))
+                _rmbDownAt = UnityEngine.Time.unscaledTime;
+
+            if (UnityEngine.Input.GetMouseButtonUp(1))
+            {
+                if (_rmbDownAt >= 0f)
+                {
+                    LastRmbHeld = UnityEngine.Time.unscaledTime - _rmbDownAt;
+                    if (LastRmbHeld <= window) UserWantsReady = !UserWantsReady;
+                }
+                _rmbDownAt = -1f;
+            }
+        }
+
         public bool KeyHeld { get { return _keyHeldLast; } }
 
         /// <summary>

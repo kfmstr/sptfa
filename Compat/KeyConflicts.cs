@@ -46,6 +46,9 @@ namespace SPTFreeAim.Compat
         public static readonly Dictionary<string, string> Blocked =
             new Dictionary<string, string>();
 
+        /// <summary>Hotkeys this run moved off a clashing key, for the HUD.</summary>
+        public static readonly List<string> Moved = new List<string>();
+
         /// <summary>
         /// True when this hotkey must be IGNORED because Tarkov owns the key too.
         /// A key that does two things is not a hotkey, it is a trap, and the mod
@@ -103,6 +106,7 @@ namespace SPTFreeAim.Compat
                 Dictionary<string, List<string>> gameKeys = ParseBindings(File.ReadAllText(path));
 
                 Blocked.Clear();
+                Moved.Clear();
                 GameKeys.Clear();
                 foreach (string k in gameKeys.Keys) GameKeys.Add(k);
                 Checked = true;
