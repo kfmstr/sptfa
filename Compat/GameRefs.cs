@@ -34,7 +34,6 @@ namespace SPTFreeAim.Compat
         // ---- Player ------------------------------------------------------
         private static readonly Member M_IsYourPlayer = new Member("Player.IsYourPlayer", "IsYourPlayer");
         private static readonly Member M_MovementContext = new Member("Player.MovementContext", "MovementContext");
-        private static readonly Member M_Pwa = new Member("Player.ProceduralWeaponAnimation", "ProceduralWeaponAnimation");
         private static readonly Member M_HandsController = new Member("Player.HandsController", "HandsController");
 
         // ---- MovementContext ---------------------------------------------
@@ -94,7 +93,6 @@ namespace SPTFreeAim.Compat
         private static readonly Member M_CurrentScope = new Member("PWA.CurrentScope", "CurrentScope");
         private static readonly Member M_SightBone = new Member("SightNBone.Bone", "Bone");
         private static readonly Member M_SightIsOptic = new Member("SightNBone.IsOptic", "IsOptic");
-        private static readonly Member M_LensRenderer = new Member("OpticSight.LensRenderer", "LensRenderer");
         private static Type _boundScopeType;
         private static bool _warnedNoScope;
 
@@ -157,7 +155,6 @@ namespace SPTFreeAim.Compat
                 const BindingFlags ANY = BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic;
 
                 M_IsYourPlayer.Bind(T_Player);
-                M_Pwa.Bind(T_Player);
                 M_HandsController.Bind(T_Player);
 
                 if (!M_MovementContext.Bind(T_Player)) { LastError = "Player.MovementContext not found"; return; }
@@ -356,7 +353,6 @@ namespace SPTFreeAim.Compat
 
         public static object GetMovementContext(object player) => M_MovementContext.Get(player);
 
-        public static object GetPwa(object player) => M_Pwa.Get(player);
 
         public static object GetHandsController(object player) => M_HandsController.Get(player);
 
@@ -939,20 +935,6 @@ namespace SPTFreeAim.Compat
             Plugin.Log.LogInfo(sb.ToString());
         }
 
-        /// <summary>
-        /// The lens renderer of the optic under <paramref name="bone"/>, when it
-        /// has one. This is the window - it must keep drawing.
-        /// </summary>
-        public static Renderer GetLensRenderer(Transform bone)
-        {
-            if (bone == null || _t_OpticSight == null) return null;
-
-            Component c = bone.GetComponentInChildren(_t_OpticSight, true);
-            if (c == null) return null;
-
-            if (!M_LensRenderer.Resolved) M_LensRenderer.Bind(c.GetType());
-            return M_LensRenderer.Get(c) as Renderer;
-        }
 
         /// <summary>True when this object carries a component that draws the aiming dot.</summary>
         public static bool IsReticleObject(GameObject go)
@@ -967,55 +949,6 @@ namespace SPTFreeAim.Compat
             return false;
         }
 
-        private static Material _dumpedFor;
-
-        /// <summary>
-        /// Write the optic lens's shader and every property it exposes to the
-        /// log, once per material.
-        ///
-        /// Nothing in Assembly-CSharp exposes a per-optic glare, so whether the
-        /// old lens-glare effect can be turned back on is a question about what
-        /// the SHADER still carries - and that is runtime data. Rather than guess
-        /// at property names, print them.
-        /// </summary>
-        public static void DumpLensMaterialOnce(Transform bone)
-        {
-            Renderer lens = GetLensRenderer(bone);
-            if (lens == null) return;
-
-            Material m = lens.sharedMaterial;
-            if (m == null || ReferenceEquals(m, _dumpedFor)) return;
-            _dumpedFor = m;
-
-            System.Text.StringBuilder sb = new System.Text.StringBuilder();
-            sb.Append("Optic lens material: ").Append(m.name)
-              .Append("   shader: ").Append(m.shader == null ? "none" : m.shader.name);
-
-            try
-            {
-                int n = m.shader.GetPropertyCount();
-                for (int i = 0; i < n; i++)
-                    sb.Append("\n    ").Append(m.shader.GetPropertyType(i))
-                      .Append("  ").Append(m.shader.GetPropertyName(i));
-            }
-            catch (Exception e)
-            {
-                // Older Unity has no shader reflection at runtime. Fall back to
-                // asking about the names a glare would plausibly use.
-                sb.Append("\n    (no shader reflection: ").Append(e.GetType().Name).Append(")");
-                string[] guesses =
-                {
-                    "_Glare", "_GlareIntensity", "_LensFlare", "_Flare", "_Reflection",
-                    "_ReflectionIntensity", "_ReflectionColor", "_SpecColor", "_Glossiness",
-                    "_EmissionColor", "_Fresnel", "_FresnelPower", "_RimColor", "_RimPower"
-                };
-                for (int i = 0; i < guesses.Length; i++)
-                    if (m.HasProperty(guesses[i]))
-                        sb.Append("\n    HAS ").Append(guesses[i]);
-            }
-
-            Plugin.Log.LogInfo(sb.ToString());
-        }
 
         // ============= The weapon's own rotation centre ==================
         //
@@ -1047,7 +980,6 @@ namespace SPTFreeAim.Compat
         private static Type _boundPwaType, _boundSpringType;
         public static bool RotationCentreAvailable { get; private set; }
         public static string RotationCentreWhyNot = "not resolved yet";
-        public static Vector3 LastRotationCentre;
 
         /// <summary>
         /// The weapon's own rotation centre, in WeaponRootAnim local space.
@@ -1102,7 +1034,6 @@ namespace SPTFreeAim.Compat
             // points forward down the weapon - so the hinge can be pushed toward
             // the muzzle if the authored hands centre still sits too far back.
             centre = Vector3.LerpUnclamped(hands, stock, stockWeight);
-            LastRotationCentre = centre;
             return true;
         }
 
@@ -1129,209 +1060,7 @@ namespace SPTFreeAim.Compat
         // Keyed on the sight, not a bool: switching from a holo to a scope is a
         // different lens with a different shader, and dumping only the first one
         // answers half the question. F51.
-        private static object _dumpedSight;
 
-        public static void DumpOpticSetupOnce()
-        {
-            // re-dumps whenever the fitted sight changes
-
-            try
-            {
-                Assembly asmCSharp = AppDomain.CurrentDomain.GetAssemblies()
-                    .FirstOrDefault(a => a.GetName().Name == "Assembly-CSharp");
-                if (asmCSharp == null) return;
-
-                Type camMgr = asmCSharp.GetType("EFT.CameraControl.CameraManager", false);
-                if (camMgr == null) return;
-
-                PropertyInfo instProp = camMgr.GetProperty("Instance",
-                    BindingFlags.Static | BindingFlags.Public | BindingFlags.NonPublic);
-                object inst = instProp == null ? null : instProp.GetValue(null, null);
-                if (inst == null) return;
-
-                PropertyInfo pOcm = camMgr.GetProperty("OpticCameraManager",
-                    BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
-                object ocm = pOcm == null ? null : pOcm.GetValue(inst, null);
-                if (ocm == null) return;
-
-                Type tOcm = ocm.GetType();
-                var sb = new StringBuilder();
-                sb.AppendLine("=== OPTIC SETUP DUMP (docs/07-FINDINGS.md F43) ===");
-
-                // ---- how the two post stacks are ROUTED ----
-                //
-                // The effects landed in the optic profile and showed up on the
-                // MAIN view. In PostProcessing v2 a volume is applied by any
-                // PostProcessLayer whose volumeLayer mask includes the volume's
-                // GameObject layer - a volume does not belong to a camera, it is
-                // picked up by whoever is looking for its layer. So the routing is
-                // the whole question, and it is four numbers. F51.
-                FieldInfo fVol = tOcm.GetField("_postProcessVolume",
-                    BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
-                object vol = fVol == null ? null : fVol.GetValue(ocm);
-                sb.AppendLine("optic post volume: " + (vol == null ? "NULL" : vol.GetType().FullName));
-
-                FieldInfo fOpticLayer = tOcm.GetField("_postProcessLayer",
-                    BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
-                DescribeRouting(sb, "OPTIC", vol, fOpticLayer == null ? null : fOpticLayer.GetValue(ocm));
-
-                FieldInfo fMainVol = camMgr.GetField("_postProcessVolume",
-                    BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
-                FieldInfo fMainLayer = camMgr.GetField("_postProcessLayer",
-                    BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
-                DescribeRouting(sb, "MAIN",
-                    fMainVol == null ? null : fMainVol.GetValue(inst),
-                    fMainLayer == null ? null : fMainLayer.GetValue(inst));
-
-                if (vol != null)
-                {
-                    object profile = GetMemberValue(vol, "profile") ?? GetMemberValue(vol, "sharedProfile");
-                    sb.AppendLine("  profile: " + (profile == null ? "NULL" : profile.ToString()));
-
-                    object settings = profile == null ? null : GetMemberValue(profile, "settings");
-                    var list = settings as System.Collections.IEnumerable;
-                    if (list == null) sb.AppendLine("  settings: none readable");
-                    else
-                        foreach (object eff in list)
-                        {
-                            if (eff == null) continue;
-                            object en = GetMemberValue(eff, "enabled");
-                            object enVal = en == null ? null : GetMemberValue(en, "value");
-                            sb.AppendLine("    EFFECT " + eff.GetType().Name + "   enabled=" +
-                                          (enVal == null ? "?" : enVal.ToString()));
-                        }
-                }
-
-                // ---- the lens itself ----
-                PropertyInfo pSight = tOcm.GetProperty("CurrentOpticSight",
-                    BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
-                object sight = pSight == null ? null : pSight.GetValue(ocm, null);
-                sb.AppendLine("current optic sight: " + (sight == null ? "NONE FITTED" : sight.ToString()));
-
-                if (sight != null)
-                {
-                    FieldInfo fLens = sight.GetType().GetField("LensRenderer",
-                        BindingFlags.Instance | BindingFlags.Public);
-                    Renderer lens = fLens == null ? null : fLens.GetValue(sight) as Renderer;
-                    sb.AppendLine("  lens renderer: " + (lens == null ? "NULL" : lens.name));
-
-                    if (lens != null)
-                        foreach (Material mat in lens.sharedMaterials)
-                        {
-                            if (mat == null) continue;
-                            Shader sh = mat.shader;
-                            sb.AppendLine("    MATERIAL " + mat.name + "   shader " +
-                                          (sh == null ? "NULL" : sh.name));
-                            if (sh == null) continue;
-
-                            int n = sh.GetPropertyCount();
-                            for (int i = 0; i < n; i++)
-                                sb.AppendLine("        " + sh.GetPropertyType(i) + "  " + sh.GetPropertyName(i));
-                        }
-                }
-
-                // ---- the collimator glass, which has no camera and no stack ----
-                //
-                // A holo or red dot is a MeshRenderer with a Material on it:
-                //
-                //     CollimatorSight.Awake:
-                //         CollimatorMeshRenderer = GetComponent<MeshRenderer>()
-                //         CollimatorMaterial     = CollimatorMeshRenderer.sharedMaterial
-                //
-                // No camera, no render texture, no PostProcessVolume, so every
-                // post-processing trick in this mod is unavailable there by
-                // construction (F54). What IS available is that material, and
-                // nothing in the code says what its shader exposes because the
-                // shader lives in an asset bundle. So ask it. F59.
-                //
-                // Note sharedMaterial: it is the ASSET, shared by every sight of
-                // that type, and a write to it outlives the raid. Read-only here.
-                int collimators = 0;
-                try
-                {
-                    Type tColl = asmCSharp.GetType("CollimatorSight", false);
-                    if (tColl == null) sb.AppendLine("collimator type not found");
-                    else
-                    {
-                        UnityEngine.Object[] found = UnityEngine.Object.FindObjectsOfType(tColl);
-                        sb.AppendLine("collimator sights in scene: " + found.Length);
-
-                        foreach (UnityEngine.Object c in found)
-                        {
-                            if (c == null) continue;
-                            collimators++;
-                            var go = GetMemberValue(c, "gameObject") as GameObject;
-                            var mr = GetMemberValue(c, "CollimatorMeshRenderer") as Renderer;
-                            sb.AppendLine("  COLLIMATOR " + (go == null ? "?" : go.name) +
-                                          "   renderer " + (mr == null ? "NULL" : mr.name) +
-                                          "   enabled " + (mr != null && mr.enabled));
-                            if (mr == null) continue;
-
-                            foreach (Material mat in mr.sharedMaterials)
-                            {
-                                if (mat == null) continue;
-                                Shader sh = mat.shader;
-                                sb.AppendLine("    MATERIAL " + mat.name + "   shader " +
-                                              (sh == null ? "NULL" : sh.name) +
-                                              "   renderQueue " + mat.renderQueue);
-                                if (sh == null) continue;
-
-                                int pn = sh.GetPropertyCount();
-                                for (int i = 0; i < pn; i++)
-                                {
-                                    string pname = sh.GetPropertyName(i);
-                                    string ptype = sh.GetPropertyType(i).ToString();
-
-                                    // The VALUE matters as much as the name: a
-                                    // colour property sitting at black and one at
-                                    // white are the difference between a dial that
-                                    // tints and a dial that does nothing.
-                                    string val = "";
-                                    try
-                                    {
-                                        if (ptype == "Color") val = "  = " + mat.GetColor(pname);
-                                        else if (ptype == "Float" || ptype == "Range") val = "  = " + mat.GetFloat(pname);
-                                        else if (ptype == "Vector") val = "  = " + mat.GetVector(pname);
-                                        else if (ptype == "Texture")
-                                        {
-                                            Texture t = mat.GetTexture(pname);
-                                            val = "  = " + (t == null ? "none" : t.name);
-                                        }
-                                    }
-                                    catch { }
-
-                                    sb.AppendLine("        " + ptype.PadRight(9) + pname + val);
-                                }
-                                sb.AppendLine("        KEYWORDS " + string.Join(" ", mat.shaderKeywords));
-                            }
-                        }
-                    }
-                }
-                catch (Exception ce)
-                {
-                    sb.AppendLine("collimator dump failed: " + Explain(ce));
-                }
-
-                // The latch is keyed on BOTH what is fitted: the optic sight
-                // instance and how many collimators are in the scene.
-                //
-                // Keyed on the optic alone it printed once, before anything was
-                // fitted, and never again (F48). Keyed on the optic alone it ALSO
-                // never printed for a red dot, because a red dot leaves
-                // CurrentOpticSight null - so the one case this dump was added for
-                // would have been the one case it stayed silent on. A diagnostic
-                // has to key on everything it reports, not on the first thing it
-                // happened to report.
-                if (ReferenceEquals(sight, _dumpedSight)) return;
-                _dumpedSight = sight;
-                Plugin.Log.LogInfo(sb.ToString());
-            }
-            catch (Exception e)
-            {
-                _dumpedSight = new object();   // stop retrying a throwing dump
-                Plugin.Log.LogWarning("Optic setup dump failed: " + Explain(e));
-            }
-        }
 
         /// <summary>
         /// The renderer of the glass you look THROUGH, by reference.
@@ -1377,82 +1106,8 @@ namespace SPTFreeAim.Compat
             catch { return null; }
         }
 
-        /// <summary>
-        /// Print who applies what. A PPv2 volume is not owned by a camera: every
-        /// PostProcessLayer applies every volume whose GameObject layer is in that
-        /// layer's volumeLayer mask. If the main camera's mask includes the optic
-        /// volume's layer, effects added "to the scope" appear on the whole screen,
-        /// which is exactly what the owner reported. F51.
-        /// </summary>
-        private static void DescribeRouting(StringBuilder sb, string label, object volume, object layer)
-        {
-            if (volume != null)
-            {
-                var go = GetMemberValue(volume, "gameObject") as GameObject;
-                sb.AppendLine("  " + label + " volume  obj=" + (go == null ? "?" : go.name)
-                    + "  layer=" + (go == null ? -1 : go.layer)
-                    + " (" + (go == null ? "?" : LayerMask.LayerToName(go.layer)) + ")"
-                    + "  isGlobal=" + GetMemberValue(volume, "isGlobal")
-                    + "  priority=" + GetMemberValue(volume, "priority")
-                    + "  weight=" + GetMemberValue(volume, "weight")
-                    + "  enabled=" + GetMemberValue(volume, "enabled"));
-            }
-            else sb.AppendLine("  " + label + " volume  NULL");
 
-            if (layer != null)
-            {
-                var go = GetMemberValue(layer, "gameObject") as GameObject;
-                object mask = GetMemberValue(layer, "volumeLayer");
-                int maskValue = 0;
-                bool maskRead = false;
-                if (mask != null)
-                {
-                    object v = GetMemberValue(mask, "value");
-                    if (v is int) { maskValue = (int)v; maskRead = true; }
-                }
 
-                sb.AppendLine("  " + label + " layer   obj=" + (go == null ? "?" : go.name)
-                    + "  enabled=" + GetMemberValue(layer, "enabled")
-                    + "  volumeLayer mask=" + (maskRead ? maskValue.ToString() : "UNREADABLE")
-                    + "  -> " + (maskRead ? MaskNames(maskValue) : "could not read"));
-            }
-            else sb.AppendLine("  " + label + " layer   NULL");
-        }
-
-        /// <summary>
-        /// Decode a LayerMask.
-        ///
-        /// -1 is EVERYTHING, not an error. The first version of this used -1 as
-        /// its own failure sentinel and printed "unreadable" for it - so the
-        /// diagnostic built to answer "why does the scope volume reach the main
-        /// camera" hid the answer, which was that both masks are Everything.
-        /// A sentinel that collides with a real value is not a sentinel. F52.
-        /// </summary>
-        private static string MaskNames(int mask)
-        {
-            if (mask == -1) return "EVERYTHING (applies volumes on every layer)";
-            if (mask == 0) return "NOTHING (this layer applies no volumes at all)";
-
-            var names = new List<string>();
-            for (int i = 0; i < 32; i++)
-            {
-                if ((mask & (1 << i)) == 0) continue;
-                string n = LayerMask.LayerToName(i);
-                names.Add(i + ":" + (string.IsNullOrEmpty(n) ? "(unnamed)" : n));
-            }
-            return names.Count == 0 ? "none" : string.Join(", ", names.ToArray());
-        }
-
-        private static object GetMemberValue(object target, string name)
-        {
-            if (target == null) return null;
-            Type t = target.GetType();
-            PropertyInfo p = t.GetProperty(name, BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
-            if (p != null) { try { return p.GetValue(target, null); } catch { } }
-            FieldInfo f = t.GetField(name, BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
-            if (f != null) { try { return f.GetValue(target); } catch { } }
-            return null;
-        }
 
         // ================= The dirt texture, borrowed ====================
         //

@@ -335,7 +335,6 @@ namespace SPTFreeAim.Patches
             // The diagnostic that was never wired up. One raid with this on tells
             // us what the optic's own post stack already carries, which is the
             // only way to know - it is asset data, not code. F43.
-            if (cfg.DumpLensMaterial.Value) GameRefs.DumpOpticSetupOnce();
 
             try { ApplyOpticGlass(cfg); }
             catch (Exception e)
@@ -840,7 +839,6 @@ namespace SPTFreeAim.Patches
             root.position = pivot + q * (root.position - pivot);
             root.rotation = q * root.rotation;
 
-            LastPivot = pivot;
         }
 
         private static float _drainCarry;
@@ -935,8 +933,6 @@ namespace SPTFreeAim.Patches
             });
         }
 
-        /// <summary>Last world pivot used, for the HUD.</summary>
-        public static Vector3 LastPivot;
 
         /// <summary>Last local pivot used by the legacy hinge, for the HUD.</summary>
         public static Vector3 LastPivotLocal;

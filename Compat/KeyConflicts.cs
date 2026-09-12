@@ -62,7 +62,6 @@ namespace SPTFreeAim.Compat
         /// <summary>Every key name Tarkov has bound to something. Empty if unread.</summary>
         private static readonly HashSet<string> GameKeys = new HashSet<string>();
 
-        public static bool IsGameKey(string keyName) { return GameKeys.Contains(keyName); }
         public static bool Checked;
 
         /// <summary>

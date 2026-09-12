@@ -4342,3 +4342,150 @@ object was tracked as if it belonged to the session** - the mask remembered
 against no camera, the dump keyed against a population rather than a fitting. A
 latch is a claim about what can change; get that wrong and it either never fires
 or never stops.
+
+---
+
+## F61. The rollback was incomplete, and the cost was a whole-scene scan per frame
+
+The owner, after the rollback: *"when I turn the mod on the fps drops
+significantly, this didn't happen before. Please check the changes it is
+certainly related to materials that we were trying to change on collimator."*
+
+He was right on both counts and I had spent a message pointing at another mod's
+version bump. The A/B he described - toggle the mod, watch the frame rate - is
+evidence about THIS mod and nothing else, and I should have treated it that way
+immediately instead of reaching for the neighbouring change.
+
+### What the rollback missed
+
+F60 removed the collimator DRIVER: the config section, the per-frame apply, the
+HUD row, `CollimatorGlass.cs`. It did not remove the collimator DUMP that F59 had
+added to `GameRefs.DumpOpticSetupOnce`, because the dump reads and never writes
+and so did not look like part of the feature.
+
+It was the expensive half.
+
+```csharp
+// FreeAimPatches.Frame, once per frame:
+if (cfg.DumpLensMaterial.Value) GameRefs.DumpOpticSetupOnce();
+```
+
+`Log the optic setup` was on in his config. And the latch that makes the method
+"Once" sat at the **bottom**:
+
+```
+IL 92    new StringBuilder
+IL 367   Shader.GetPropertyCount
+         Object.FindObjectsOfType(CollimatorSight)     <- whole-scene scan
+         per material: GetColor / GetFloat / GetVector / GetTexture
+         mat.shaderKeywords                            <- allocates
+IL ~2900 if (ReferenceEquals(sight, _dumpedSight)) return;    <- the latch
+```
+
+So every frame the mod was awake it walked the entire scene for collimator
+components, enumerated every shader property on every sight material, read each
+one's value, allocated several kilobytes of report, and then discarded all of it
+at the last line because nothing had changed.
+
+That structure was always wrong and had always been there. It was survivable
+while the body was a handful of reflection reads. F59 dropped a whole-scene
+`FindObjectsOfType` and a per-material property sweep into it, and the wrongness
+became a frame-rate drop you can feel the moment the mod is switched on.
+
+### The fix, and the rule
+
+The guard now reads the one value it needs and leaves:
+
+```
+IL 85    ReferenceEquals(sightNow, _dumpedSight)  ->  return
+IL 92    new StringBuilder
+```
+
+and the collimator scan is deleted outright - it already did its job, and what it
+found is written down in F59 where it costs nothing to reread.
+
+**A method named "Once" is a claim, and the claim is only true where the check
+sits.** Putting the latch last makes the name describe the LOGGING rather than
+the work, which is the same class of error as F40's `LocalRotateAround`: a name
+that describes intent while the mechanism does something else. The build check
+now asserts the position, not just the presence - `ReferenceEquals` must appear
+in the IL before the first `StringBuilder` and before the first
+`GetPropertyCount`.
+
+And the wider one, which is the third time this project has paid for it: **a
+diagnostic is code.** F45's test scanned commented-out code, F57's checker was
+right and unwired, and this one was correct, cheap-looking, and ran sixty times a
+second. Read-only does not mean free.
+
+### What this does not explain
+
+The owner also reported materials looking "very detailed". Nothing in the removed
+code writes to a material - it is all reads - so this change should not alter how
+anything looks. That half is still open, and the honest answer is that I do not
+yet know. `Tarkov Interior Lights` went 0.4.0 -> 0.6.0 on the same machine and
+now drives 348 lights across six families where 0.4.0 drove about 57, which is a
+candidate and not a conclusion. One raid with each DLL renamed settles it.
+
+---
+
+## F62. The dead-code sweep, measured rather than guessed
+
+The owner: *"delete anything that is not used right now, we abandon idea to make
+corrections for calimator for now."*
+
+Grepping for names would have found some of it and missed the rest, so the sweep
+was done against the compiled assembly instead: build a reachability graph from
+the real entry points - Unity messages, Harmony patch targets, constructors - and
+report every method that nothing reaches and every field that nothing reads.
+
+### Removed
+
+| | |
+|---|---|
+| `DumpOpticSetupOnce` + `DescribeRouting` + `MaskNames` | the per-frame optic dump, F61's culprit |
+| `DumpLensMaterialOnce` + `GetLensRenderer` | never called from anywhere; the code's own comment said so |
+| `GetPwa`, `GetMemberValue`, `KeyConflicts.IsGameKey` | unreachable |
+| `M_Pwa`, `M_LensRenderer` | Members bound every raid to feed deleted code |
+| `LastRotationCentre`, `LastPivot`, `OpticHousing.Affected`, `_dumpedFor`, `_dumpedSight` | written, never read |
+| `Log the optic setup`, `Verbose logging` | config keys nothing reads |
+
+`GameRefs.cs` went from 77,802 to 63,395 bytes. The DLL went from 163,328 to
+154,112.
+
+### The seven that look dead and are not
+
+The probe still reports seven unreachable methods:
+
+```
+TrackLocalPlayer  ->  OnLocalPlayerChanged  ->  ForgetGuards  ->  TransformGuard.Forget
+IsYourPlayer      ->  Member.Get
+StanceState.ToString
+```
+
+All of them descend from one root the IL cannot see:
+
+```csharp
+new HarmonyMethod(typeof(FreeAimPatches).GetMethod(
+    nameof(TrackLocalPlayer), BindingFlags.Static | BindingFlags.NonPublic))
+```
+
+`nameof` compiles to a string, so the call site vanishes from the IL and every
+method below it looks orphaned. `StanceState.ToString` is reached by a
+`string.Format` in the HUD, which is also invisible.
+
+**A reachability tool is only as good as its list of roots, and reflection is a
+root it cannot infer.** Deleting on the tool's word alone would have removed the
+local-player hook and quietly broken the mod on every weapon change. The tool
+narrows where to look; it does not decide. Each of the seven was confirmed by
+hand before being kept.
+
+### Left standing, deliberately
+
+Two whole-scene scans remain, both bounded and both checked: `OpticStack.Census`
+runs once per profile resolve, and `OpticHousing.FindBlendShader` once per
+session and only when sight transparency is on. Neither is on the frame path.
+
+`OpticHousing` and its `Sight transparency` dial survive this pass. The feature is
+wired, costs nothing at zero, and is documented as unachievable through a shader
+swap - which makes it a judgement call about a FEATURE rather than dead code, and
+that is the owner's call to make, not a sweep's.

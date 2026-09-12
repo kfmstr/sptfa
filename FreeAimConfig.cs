@@ -146,7 +146,6 @@ namespace SPTFreeAim
         public ConfigEntry<bool> GunLeansWithBody;
         public ConfigEntry<float> SightAlpha;
         public ConfigEntry<bool> LogSightMaterials;
-        public ConfigEntry<bool> DumpLensMaterial;
         public ConfigEntry<bool> KeepFovWhenAiming;
         public ConfigEntry<bool> KeepFovWithOptics;
         public ConfigEntry<bool> ZoomOnHoldBreath;
@@ -159,7 +158,6 @@ namespace SPTFreeAim
         public ConfigEntry<KeyboardShortcut> HudKey;
         public ConfigEntry<KeyboardShortcut> ProbeWriteKey;
         public ConfigEntry<float> ProbeWriteDegrees;
-        public ConfigEntry<bool> VerboseLogging;
 
         public void Bind(ConfigFile cfg)
         {
@@ -729,21 +727,6 @@ namespace SPTFreeAim
                 "0 is off. Stay under about 0.3 either way; past that it looks like a fisheye.",
                 new AcceptableValueRange<float>(-1f, 1f)));
 
-            DumpLensMaterial = cfg.Bind(S_BODY, "Log the optic setup", false,
-                "DIAGNOSTIC, and the one thing that would move the scope glass forward.\n" +
-                "\n" +
-                "The curved-glass look - the ring at the rim, the darkening toward the edge, the " +
-                "bright hotspot on the lens - is not a full-screen effect. It happens inside the " +
-                "scope image, which Tarkov renders with a SEPARATE camera that has its own post " +
-                "stack (OpticCameraManager._postProcessVolume).\n" +
-                "\n" +
-                "Whether that stack already carries a lens distortion, a vignette or a bloom - " +
-                "shipped but switched off - is asset data. It cannot be read out of the assembly, " +
-                "only out of a running raid. This prints it, plus every shader property on the " +
-                "current optic's lens material, once per raid.\n" +
-                "\n" +
-                "Turn it on, load in with a scoped weapon, aim through it once, then send the log.");
-
             KeepFovWhenAiming = cfg.Bind(S_BODY, "Keep your field of view when aiming", false,
                 "Tarkov narrows the view by fifteen degrees the moment the weapon comes up. It is " +
                 "meant to read as leaning into the sight, and under free aim it is wrong twice " +
@@ -801,8 +784,6 @@ namespace SPTFreeAim
                 "Large enough to be unmistakable on screen.",
                 new AcceptableValueRange<float>(-90f, 90f)));
 
-            VerboseLogging = cfg.Bind(S_DEBUG, "Verbose logging", false,
-                "Per-frame values to the BepInEx console. Noisy; for short captures only.");
         }
 
         public FreeAimState.Tuning Snapshot()

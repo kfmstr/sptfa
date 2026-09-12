@@ -37,7 +37,6 @@ namespace SPTFreeAim.Patches
         }
 
         public static string Status = "not started";
-        public static int Affected;
 
         // Renderer -> the exact array it had before we touched it. Restoring the
         // ARRAY and not just element 0 is why this one comes back cleanly.
@@ -110,7 +109,6 @@ namespace SPTFreeAim.Patches
                 if (any) { r.sharedMaterials = swapped; touched++; }
             }
 
-            Affected = touched;
             Status = touched > 0
                 ? string.Format("{0} parts at alpha {1:F2} via {2}", touched, alpha, _blend.name)
                 : "no part of the housing had a texture we could carry over";
@@ -288,7 +286,6 @@ namespace SPTFreeAim.Patches
             }
             catch { }
             _original.Clear();
-            Affected = 0;
         }
 
         public static void Release()
