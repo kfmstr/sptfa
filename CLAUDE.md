@@ -37,6 +37,44 @@ pivot-rotation maths is reused, for the final apply step.
 - dnSpy for decompiling `Assembly-CSharp.dll`
 - UnityExplorer for live in-game object inspection
 
+## Build and ship - do NOT make the owner build
+
+**Compile here and install the DLL yourself. Every time.** The owner is not the
+build server, and asking him to open Visual Studio for each change adds a
+round-trip to a loop that already needs a raid to test anything.
+
+```
+mcs -target:library -nostdlib -noconfig \
+    -out:SPTFreeAim.dll \
+    $(for f in <staged game assemblies>/*.dll; do echo -r:$f; done) \
+    $(find . -name '*.cs' -not -path './tests/*')
+```
+
+Reference the owner's OWN staged game assemblies so the binary matches his
+runtime rather than an SDK's idea of it.
+
+**Install it, and prove it installed (F53):**
+
+1. Copy the build to a staging filename **that has never been used before**
+   (`dist/SPTFreeAim-HHMMSS.dll`). Reusing a staging path once served the
+   *previous* build while reporting `written` with a fresh timestamp.
+2. `device_commit_files` that file to `C:\SPT - Dev\BepInEx\plugins\SPTFreeAim.dll`.
+3. `device_list_dir` the plugins folder and check the **size**.
+4. `device_stage_files` the installed DLL back and compare **md5** against the
+   build.
+
+A `written` result and a current mtime are not evidence. Only the hash is.
+
+Before shipping a build, confirm it is actually a plugin - `BepInPlugin` attribute
+present, base type `BepInEx.BaseUnityPlugin`, and any new types you added are in
+the output. A green compile is not proof (F31, F49).
+
+Two things must not both write that DLL. If the owner builds in VS as well, one
+of the two will silently win. Ship from here and leave VS closed, or agree the
+other way round - but pick one.
+
+The game must not be running when the DLL is written; it holds a lock.
+
 ## Current state
 
 Scaffold written, never run in the game. The drive loop is implemented and

@@ -3538,3 +3538,807 @@ The build succeeded and grew by 9 KB, which is exactly what a working change loo
 like from the outside. It was caught by grepping for the call site rather than
 trusting the build. Same shape as F31's stale DLL: **a green build is evidence the
 code compiles, never evidence it runs.**
+
+---
+
+## F50. I made the owner the build server for the whole project
+
+*"I have another agent that solves me the interior light problem and he compiles
+everything itself, why do I need to build myself for you everytime?"*
+
+No good reason. That is the entire finding.
+
+I have compiled this mod with `mcs` on **every single turn** of this project, as
+the verification step - checking it builds, checking the reference list, checking
+the artefact size after F31. Then I handed him a git commit message and asked him
+to open Visual Studio and build it again.
+
+The other agent, working on `InteriorLights` in the same folder tree, compiles
+with the same `mcs` against the same staged assemblies and drops the DLL straight
+into `BepInEx\plugins`. Same technique, one fewer human step.
+
+### Why it went unnoticed
+
+Because it never failed. Every turn ended with a plausible instruction, he
+followed it, and the loop closed. Nothing in the logs or the HUD could have
+flagged it, because it is not a defect in the software - it is a defect in the
+process, and the software has no view of that.
+
+That is worth naming: **this project's whole discipline is "make the machine say
+what it is doing", and none of that machinery can see a wasted human step.** It
+took him comparing two agents to spot it.
+
+### It also explains an earlier bug
+
+F47's stale `GameRefs.cs` - my write reported success and the file on disk was the
+old version - is most likely this same arrangement biting. With Visual Studio
+holding the solution open, an editor buffer loaded before my sync gets written
+back over it on the next save. Two writers, one file.
+
+Shipping the DLL from here removes one of the two writers.
+
+### The rule
+
+`CLAUDE.md` now says it plainly: compile here, install the DLL with
+`device_commit_files`, verify it landed, and check the output really is a plugin
+(`BepInPlugin` attribute, `BaseUnityPlugin` base, new types present) rather than
+trusting a green compile - which F31 and F49 both proved means nothing on its own.
+
+### The lesson worth keeping
+
+**Ask what you are asking the person to do that you could do yourself.** I had the
+compiler, the assemblies, and the file-write tool in hand for the entire project,
+used all three every turn, and still outsourced the last step by habit.
+
+---
+
+## F51. The lens shader, at last - and a volume is not owned by a camera
+
+Two results in one log, one of them ten rounds overdue.
+
+### CW FX/OpticSight
+
+The optic dump finally ran with a sight fitted, and printed the thing that has
+been guessed at since F26:
+
+```
+lens renderer: linza_mode_001
+MATERIAL scope_dovetail_belomo_pso_1_4x24_LOD0_linza_1 (Instance)
+shader  CW FX/OpticSight
+    Texture  _MarkTex          the reticle mark
+    Texture  _MaskTex
+    Texture  _MaskTex2
+    Range    _MarkLightness    reticle brightness
+    Vector   _ShiftDirection
+    Vector   _Shifts
+    Vector   _Scales
+    Range    _NormalHideness
+```
+
+**No `_Color`. No `_MainTex`. No albedo of any kind.**
+
+So sight transparency by shader swap was never possible - there is nothing to
+carry across. F34 diagnosed "EFT weapon materials do not keep albedo in
+`_MainTex`" and treated it as a thing to work around by searching harder for the
+albedo. The truth is simpler and worse: on the lens there is no albedo to find,
+because the shader composites a reticle over a render texture rather than
+shading a surface.
+
+Three separate attempts (F26, F34, F48) died on a fact that one line of output
+would have settled. The diagnostic existed for most of that time and never ran,
+for the reasons in F45 and F48 - never called, then latching before a sight was
+fitted.
+
+What IS there is interesting on its own: `_MarkLightness` is reticle brightness
+and `_NormalHideness` is something worth probing. Those are real dials on real
+glass, and they are the honest replacement for the transparency idea.
+
+### A PPv2 volume belongs to a layer, not to a camera
+
+The other half. The effects went into the optic profile and came out on the main
+screen:
+
+```
+EFFECT ScreenSpaceReflections  enabled=True
+EFFECT Bloom                   enabled=True    <- ours
+EFFECT ChromaticAberration     enabled=True    <- ours
+```
+
+F49 was right that the optic has its own stack and wrong about what that buys.
+In PostProcessing v2 a `PostProcessVolume` is not owned by the camera it sits on.
+Every `PostProcessLayer` applies every volume whose GameObject **layer** is inside
+that layer's `volumeLayer` mask. Two cameras with overlapping masks both apply the
+same volume.
+
+So "the optic's own volume" is a name, not an isolation guarantee, and I read it
+as one.
+
+That is the same class of error as F40 - `LocalRotateAround` was named as though it
+rotated about a point, and did not. **A name describes intent; only the mechanism
+describes behaviour.**
+
+### Measuring rather than guessing which way it leaks
+
+There are two consistent explanations - the main layer's mask includes the optic
+volume's layer, or the optic layer's mask excludes it so only the main camera ever
+applies it - and they need opposite fixes. Guessing between them is how the middle
+of this project went.
+
+The dump now prints, for BOTH stacks: the volume's GameObject name, layer index
+and name, `isGlobal`, `priority`, `weight`, `enabled`; and the layer's
+`volumeLayer` mask decoded into layer names. Four numbers settle it.
+
+It also re-dumps whenever the fitted sight changes, keyed on the sight instance
+rather than a bool, so a holo and a scope both report instead of only whichever
+was equipped first.
+
+---
+
+## F52. `volumeLayer = -1` is EVERYTHING, and my own sentinel hid it
+
+F51 built the dump that would settle which way the leak ran. The dump ran, the
+owner sent it back, and it said this:
+
+```
+OPTIC volume  obj=BaseOpticCamera(Clone)  layer=8 (Player)  isGlobal=True  priority=0  weight=1  enabled=True
+OPTIC layer   obj=BaseOpticCamera(Clone)  enabled=True  volumeLayer mask=-1
+MAIN  volume  obj=FPS Camera              layer=0 (Default) isGlobal=True  priority=0  weight=1  enabled=True
+MAIN  layer   obj=FPS Camera              enabled=True  volumeLayer mask=-1
+```
+
+`-1` is every bit set. As a `LayerMask` it is **Everything**. The FPS camera's
+`PostProcessLayer` looks for volumes on all 32 layers; the optic volume is
+`isGlobal` and lives on layer 8; therefore the FPS camera applies the scope's
+volume, and every effect "added to the scope" arrives on the whole screen. The
+owner, twice: *"It again applies it to the entire screen again, but it should
+apply this only to the image behind the scope or glass of a sight."*
+
+### The part that is mine
+
+`MaskNames()` used `-1` as its **failure sentinel** and printed
+`"unreadable"` for it. The caller used `-1` the same way, to decide whether the
+read had worked. So the one diagnostic written specifically to answer this
+question printed *"could not read the mask"* for the value that **was** the
+answer, and did it in the same paragraph as the correct numbers.
+
+`-1` is not a spare value here. It is the most common real value a `LayerMask`
+takes, and it is what Unity writes when a designer ticks Everything. Reserving it
+cost a full round-trip through a raid.
+
+**A sentinel has to be a value the domain cannot produce.** For a `LayerMask`
+there is no such `int`; the "did it work" answer needed its own `bool`, which is
+what it has now.
+
+This is F46 again in a different costume - there the error message named the
+messenger instead of the error, here the diagnostic named its own sentinel
+instead of the finding. Both times the instrument was built correctly and then
+told to lie about one specific case.
+
+### The fix is one bit
+
+Clear the optic volume's layer from the **main** layer's mask:
+
+```csharp
+int before = mask.value;              // -1, Everything
+int after  = before & ~(1 << 8);      // everything except Player
+```
+
+The main camera keeps its own volume on layer 0 and every other layer it had; it
+simply stops reading the one that belongs to the scope. The optic camera's own
+mask stays Everything, which is harmless - it is the only camera that *should*
+apply the scope's volume. Restored exactly on release, because `volumeLayer` is a
+`LayerMask` **struct** and has to be written back into the field after `.value`
+is set, not mutated in place through a boxed copy.
+
+Narrowing the optic layer's mask instead would have done nothing. The leak was
+never on the scope's side.
+
+### Layer 8 has tenants, so count them first
+
+Layer 8 is Player. Dropping it from the main camera's mask also drops any *other*
+global volume parked there, and a mod that silently deletes an unrelated
+post-processing effect from the main view is worse than the bug it fixed.
+
+So `Census()` walks every `PostProcessVolume` in the scene before touching
+anything:
+
+* the scope is alone on its layer -> drop that bit, done;
+* it has company **and** an unused layer exists -> move the scope's own
+  GameObject to the unused layer and drop *that* bit, which cannot cost anything
+  because nothing is on it;
+* it has company and no layer is free -> drop the shared bit anyway, and name in
+  the log exactly what went with it.
+
+A layer counts as taken if it carries any volume **or** if Unity has a name for
+it, so the mod never squats on something Tarkov means to use.
+
+### The destroyed profile that still read as non-null
+
+Found while writing the above, not reported by anyone. `OpticStack` held the
+profile as `object`:
+
+```csharp
+private static object _profile;
+if (_profile != null) return true;      // wrong
+```
+
+`UnityEngine.Object` overloads `==` so that a **destroyed** object compares equal
+to null. That overload is chosen by the *static* type. Held as `object`, the
+comparison falls back to reference equality, and a destroyed profile reads as
+alive forever.
+
+The optic camera is rebuilt when the weapon changes. So after one weapon swap the
+mod was writing effects into a `PostProcessProfile` that Unity had already
+destroyed, reporting `Ready`, and showing nothing - which is a very good match for
+*"none of the lens effect worked"* and for *"I tried both optic, and holo sight"*.
+
+`ProfileAlive()` casts back to `UnityEngine.Object` before comparing, so the
+overload applies and a dead profile now forces a re-resolve on the next frame.
+
+**A Unity null check only works at a static type Unity can overload.** Storing a
+Unity object in `object`, `var` from a reflection call, or a dictionary of
+`object` quietly disarms it - and reflection returns `object` every time, so this
+is a trap that gets set every time reflection touches a component.
+
+---
+
+## F53. The install said "written", and wrote the previous build
+
+First ship under F50's rule. Compiled clean, verified with Cecil, copied to the
+staging path, committed:
+
+```
+device_commit_files -> {"written":["C:\\SPT - Dev\\BepInEx\\plugins\\SPTFreeAim.dll"],"rejected":[]}
+```
+
+Then the directory listing:
+
+```
+SPTFreeAim.dll   size 151552   mtime 21:12:46      <- 12 seconds ago
+```
+
+The build was **155648** bytes. The mtime was current, the result said `written`,
+`rejected` was empty, and the file on disk was the *previous* build.
+
+Staging it back and hashing settled it:
+
+```
+device      744041d2ff2a6b156f2694d8e381916d   151552
+build       1bb1f7fafa0e9504e36939bbb529bae9   155648
+```
+
+The staging path had been used for an earlier ship, and the transfer served that
+earlier snapshot. Writing the same build to a **new, unique filename** and
+committing that put the right bytes on disk, confirmed by matching md5.
+
+Two things worth keeping.
+
+**A success result describes the call, not the outcome.** This is F34 and F48
+again - the API said yes, the state did not change. The rule that survives is the
+same one: a write is not done until something that reads the destination says so.
+Here the size in a directory listing was enough to catch it, and only a hash was
+enough to *prove* it.
+
+**Almost-right is the dangerous failure.** A refusal would have been obvious. A
+plausible file - right name, right place, fresh timestamp, `written` in the log,
+4 KB short - would have shipped silently and produced a raid in which none of the
+new code existed, and the next hour would have been spent debugging the source of
+a DLL that was never installed. F49 shipped dead code that compiled; this ships
+live code that never arrived. Both look green.
+
+The install step now: unique staging filename per build, commit, list to check
+the size, stage back and compare md5 against the build. Four calls, and the
+alternative is debugging the wrong binary.
+
+---
+
+## F54. Two features, one name, and the wrong one was easy to find
+
+F52 isolated the scope's post stack from the main camera and I said the leak was
+fixed. The owner came back with: *"glare is still applied to the entire player
+view, not on the lense or glass of the lense."*
+
+He was right, and F52 was irrelevant to what he was looking at. His HUD:
+
+```
+lens glare    bloom x0.89  dirt 3.0 ...
+optic glass   off
+```
+
+There were **two** glass features in the mod:
+
+| dial | section | drives | reaches |
+|---|---|---|---|
+| `Glare: bloom / lens dirt / colour fringing` | 6. Body | `CameraManager._prismEffects` | the whole screen |
+| `Optic: bloom / colour fringing / rim darkening` | 7. Optic glass | the scope's own PPv2 stack | inside the tube |
+
+He had the first set turned up and the second at zero, which is exactly what the
+HUD says. So he was tuning the whole-screen feature, four rounds running, while
+the scope-only feature sat off.
+
+### Why that was mine, not his
+
+BepInEx sorts the config panel by section and then alphabetically. The `Glare:`
+dials sat in **6. Body**, in the middle of the block he was already scrolling
+through for arm drain, body lean and gun blur. The `Optic:` dials sat in a
+separate section further down. The dials that could not do what he asked for were
+directly in his path; the ones that could were somewhere else, and the two sets
+described themselves in nearly the same words.
+
+`PrismEffects` is a component on the **main camera**. It has no notion of a
+scope. Every value written to it lands on the whole player view, and there is no
+tuning that moves it onto the glass - the request and the mechanism were never
+compatible. I built it anyway in F43, left it in place after F49 found the right
+mechanism, and let both ship.
+
+**Two features whose names a person cannot tell apart are one feature and one
+trap.** F44 said a setting that can be configured into doing nothing is a broken
+design; this is the sharper version - a setting that works perfectly, does the
+thing nobody asked for, and is easier to find than the one that does.
+
+The Prism drive path is deleted. Not deprecated, not renamed - deleted, so it
+cannot be found again. One thing survived it: Tarkov's lens-dirt **texture**,
+which is what makes bloom read as light scattering off glass rather than as a
+glow. PPv2's `Bloom` takes a `dirtTexture` too, so the texture moved onto the
+scope's stack as `Optic: lens dirt` and the driving stays inside the tube.
+
+### The holo sight cannot have this at all
+
+The other half of the answer, and it is a hard no. From the assembly:
+
+```
+EFT.CameraControl.OpticCameraManager
+    Camera            _camera
+    RenderTexture     _renderTexture
+    PostProcessVolume _postProcessVolume
+    PostProcessLayer  _postProcessLayer
+    OpticSight        _currentOpticSight        <- only an OpticSight
+    OnOpticSightEnabled / OnOpticSightDisabled
+
+CollimatorSight : MonoBehaviour
+    MeshRenderer  CollimatorMeshRenderer
+    Material      CollimatorMaterial
+```
+
+A magnified optic is a **second camera rendering into a texture**, which is why
+it can have its own post stack. A holo or red dot is a **mesh with a material on
+it** - no camera, no render texture, no volume, nothing. What you see "through"
+the glass of an EOTech is the ordinary main view with a reticle drawn on top.
+
+So there is no image-behind-the-glass to post-process on a red dot, and no amount
+of work produces one. The only surface that exists there is
+`CollimatorSight.CollimatorMaterial`, which is a shader problem, not a
+post-processing one. The screenshot that came with the report was an EOTech 553 -
+so even the correct feature, correctly isolated, would have shown him nothing.
+
+That fact now leads the HUD:
+
+```
+sight         magnified optic, tube rendering
+sight         NO scope image - a holo/red dot has no optic camera
+```
+
+Always drawn, on or off, above the dials it governs. **A dial that cannot apply
+has to say so where the dial is**, not in a log, and not only after someone
+spends a raid finding out.
+
+---
+
+## F55. A ceiling I invented, and two dials I had kept for myself
+
+The owner, on the first build where the glass effects landed inside the tube:
+*"the lense works great, distortion, darkening, and bloom works perfect! I would
+increase the amount of amplification of the light when we looking at the bright
+lamp should be much brighter, but the dial is limiting to increase it any
+further."*
+
+Two separate mistakes behind one symptom.
+
+### The cap was mine, not the engine's
+
+`Optic: bloom` was `AcceptableValueRange<float>(0f, 5f)`. PPv2's own declaration:
+
+```
+FloatParameter intensity   [Min(0)]
+    "Strength of the bloom filter. Values higher than 1 will make bloom
+     contribute more energy to the final render."
+```
+
+`Min(0)` and nothing else. There is no maximum. The 5 was a number I picked while
+writing the dial, on no evidence, and it then read to the owner as a limit of the
+effect rather than a limit of my imagination. Raised to 30.
+
+**A range on a config dial is a claim about the mechanism.** If the mechanism has
+no upper bound, inventing one is asserting something untrue, and the person on the
+other end has no way to tell the difference between "the engine stops here" and
+"the author stopped here".
+
+### Turning intensity up was the wrong answer anyway
+
+The request was for the LAMP to be brighter. Raising `intensity` alone does not
+do that; past a point it hazes the entire tube, because intensity scales
+everything already above the bloom threshold. Two other parameters decide which
+pixels those are, and I had hardcoded both:
+
+```csharp
+SetParam(s, "threshold", 0.9f);    // what blooms
+SetParam(s, "diffusion", 7f);      // how far the glow reaches
+```
+
+Threshold is the dial he actually needed. Raise it and only a genuinely bright
+source qualifies, at which point intensity can go as high as he likes and the
+rest of the image stays where it is. Both are now `Optic: bloom threshold` and
+`Optic: bloom spread`, with `softKnee` pinned at 0.2 so the threshold has teeth,
+and `clamp` written explicitly so a low profile value cannot quietly cap the
+bright-light case this is for.
+
+**A hardcoded constant is a decision taken away from the user without telling
+them.** Neither of these was tuned; they were placeholders that shipped, and they
+happened to sit on exactly the axis he wanted to move.
+
+### Seven floats in a row
+
+`Drive` was about to take `(bloom, threshold, spread, dirt, fringe, vignette,
+distortion)`. Seven positional floats is a transposition that compiles, builds
+green, and shows up only as two dials doing each other's job. It takes a `Glass`
+struct with named fields instead, and the build check now asserts that every
+field of that struct is READ inside `Drive` - the F45 shape, where a member that
+is never read is a dial that silently does nothing.
+
+---
+
+## F56. The scope has no colours brighter than white, and I told him to raise the threshold
+
+The owner: *"so glare didn't work, and options below glare that create optical
+distortion, and darkening the edges worked well."*
+
+Alphabetically in section 7 that is bloom failing while **edge distortion** and
+**rim darkening** succeed. All four go through the same profile, the same
+`AddSettings`, the same volume, the same isolated stack. Three work. One does not.
+So the failure is not in the plumbing, and the dump that would have told me which
+one to blame is the difference between the effects themselves.
+
+Vignette and LensDistortion are screen-space operations: they move and darken
+pixels and do not care how bright anything is. Bloom is the only one of the four
+that asks a question about brightness.
+
+### What the scope renders into
+
+`OpticCameraManager.SetResolution`, decompiled from IL:
+
+```csharp
+RenderTextureFormat fmt = Camera.allowHDR ? ARGBHalf : ARGB32;
+_renderTexture = new RenderTexture(res, res, 24, fmt, Default);
+Camera.targetTexture = _renderTexture;
+Shader.SetGlobalTexture(_camTexId, _renderTexture);
+```
+
+**ARGB32 clamps at 1.0.** In that buffer a lamp and a white wall are the same
+number. Bloom's whole job is to find the pixels brighter than a threshold, and in
+an LDR scope image there is nothing above white to find. Threshold 0.9 leaves a
+razor-thin band between 0.9 and 1.0 to work with, which is why it looked weak but
+present; the owner had already said as much - *"the amount of amplification of the
+light when we looking at the bright lamp should be much brighter"* was him
+describing a clamped buffer without knowing it.
+
+### And then I made it worse
+
+F55's advice was to raise `Optic: bloom threshold` to about 1.5 so only bright
+things would bloom. In an LDR buffer, **nothing is above 1.0**, so a threshold of
+1.5 selects the empty set. The dial I added to fix his problem is what turned a
+weak effect into a dead one, and the next report was "glare didn't work".
+
+The advice was not wrong in general. It was wrong here, and I gave it without
+checking the one thing that decides whether it applies. **A tuning recommendation
+is a claim about the data the effect will see.** I had never looked at the data.
+
+### The fix
+
+Set `allowHDR` on the optic camera and let the game rebuild its own texture:
+
+```csharp
+cam.allowHDR = true;
+setRes.Invoke(_ocm, new object[] { OpticFinalResolution });   // the GAME's method
+```
+
+Calling the game's `SetResolution` rather than building a `RenderTexture` here is
+not politeness, it is required: that method also does
+`Shader.SetGlobalTexture(_camTexId, _renderTexture)`, and the scope lens shader
+samples that global. A hand-rolled swap would leave the lens reading a texture
+nobody renders into, which is a black scope and an afternoon of confusion. The
+build check now asserts this file never constructs a `RenderTexture` at all.
+
+Capped at three attempts: `SetResolution` destroys and recreates the texture, so
+if anything in the game sets `allowHDR` back each frame, an uncapped retry would
+rebuild the scope's render target sixty times a second.
+
+### The HUD says the format now
+
+```
+optic glass    bloom 15.0 over 1.5 spread 10 dirt 1.0 fringe 0.30 rim 0.40 bow -0.10
+  scope buffer HDR forced on (ARGB32 -> ARGBHalf)   bloom live 15.0   dirt on
+  isolation    main mask -1 -> -257 (dropped layer 8)
+```
+
+and, in the case that produced this finding:
+
+```
+  scope buffer LDR (ARGB32)   bloom DEAD: threshold 1.5 > 1.0 in an LDR scope
+```
+
+That second line is the one worth keeping. **An effect that is running correctly
+on data that cannot contain what it looks for is indistinguishable, from the
+outside, from an effect that is broken** - and the person tuning it has no way to
+tell those apart. The verdict string is cheap; the raid it saves is not.
+
+---
+
+## F57. The check was right, printed in red, and nothing acted on it
+
+Third report of the same symptom: *"when choose pistol/sidearm the free aim
+disables itself."* Twice before I looked for a crash. This time I read the log
+first, which is what I should have done in round one.
+
+```
+[Info :SPT Free Aim] Free aim OFF
+[Info :SPT Free Aim] Free aim ON
+[Info :SPT Free Aim] Free aim OFF
+```
+
+No exception. No emergency disable. Those three lines come from the **toggle key
+handler**. Nothing was failing; the key was being pressed.
+
+His config:
+
+```
+Master toggle key = Alpha1
+```
+
+Tarkov's `Control.ini`:
+
+```
+SecondaryWeapon      = Alpha1
+QuickSecondaryWeapon = Alpha1
+```
+
+Drawing the pistol toggled the mod off, every single time.
+
+### The part that makes this F57 and not F47 again
+
+F47 diagnosed exactly this, wrote `Compat/KeyConflicts.cs` to detect it, and
+shipped a red warning on the HUD and in the log. That checker **ran, was
+correct, and reported the clash on his screen for weeks** while the code went on
+acting on the key. I built the instrument and then left the wire unattached.
+
+**A diagnostic that requires the user to notice it and act on it, for a condition
+the code can see perfectly well, is not a fix.** It is a fix shaped like a
+warning. The checker now returns a decision, not a sentence:
+
+```csharp
+if (Cfg.ToggleKey.Value.IsDown() && !KeyConflicts.IsBlocked("Master toggle key"))
+```
+
+Every hotkey read in `Update` is guarded the same way, and the build check
+asserts there are at least as many `IsBlocked` calls as `IsDown` calls in that
+method, so a hotkey added later cannot quietly skip the guard.
+
+### And the reason the F47 fix reached nobody
+
+F47 also changed the *default* to a safe key. That did nothing for him, and I did
+not notice for three rounds: **BepInEx writes a default only for a key it has
+never seen before.** His config had already saved `Alpha1`, so the new default
+was never consulted. The fix shipped, the source looked correct, and the
+installed behaviour did not move.
+
+That is a general trap for any mod with persisted settings. Changing a default
+fixes new installs and nobody else. A bad value that has already been written can
+only be repaired by *writing over it*, which is what `RescueClashingToggle` now
+does: if the master toggle clashes, move it to the first key Tarkov does not use,
+save, and say so loudly in the log and on the HUD. It only ever moves a key that
+is provably clashing, and only onto a key that provably is not.
+
+**Where a setting lives decides who a fix reaches.** A default is source; a saved
+value is state; editing the first has no effect on the second.
+
+---
+
+## F58. Three effects were fine and the fourth was twenty times too small
+
+*"that color distortion on the edge of the lense is gone"* - while edge
+distortion and rim darkening were fine. The startup dump said the effect existed
+and was on:
+
+```
+EFFECT ChromaticAberration   enabled=True
+```
+
+So it was added, enabled, in the right profile, on the right camera, and
+rendering nothing anybody could see. From `ChromaticAberrationRenderer.Render`:
+
+```
+ldfld  ChromaticAberration::intensity
+ldc.r4 0.05
+mul
+callvirt MaterialPropertyBlock::SetFloat(_ChromaticAberration_Amount)
+```
+
+**The engine multiplies the dial by 0.05 before the shader sees it.** A dial of
+1.0 reaches the shader as 0.05, and his 0.30 as 0.015 - a fraction of a pixel at
+scope resolution.
+
+I had already handled exactly this for its neighbour:
+
+```csharp
+SetParam(s, "intensity", distortion * 100f);   // LensDistortion is -100..100
+```
+
+So the habit existed. I applied it to one effect, checked the declared range of
+two more, and never looked at the fourth. Vignette's 0..1 happens to be its true
+range and Bloom's had no bound at all, so the two I skipped were harmless and
+the one I skipped was not. Three out of four is the worst possible result here,
+because it makes the fourth look broken rather than mis-scaled.
+
+**A parameter's declared range is not its effective range.** `RangeAttribute(0,1)`
+on `ChromaticAberration.intensity` is an editor hint; the shader's usable range
+is 0..1 of `_Amount`, which is 0..20 of the dial. The dial is now scaled by 20
+in code so 1.0 means what a person would expect it to mean, `fastMode` is written
+explicitly so a profile default cannot silently pick the weaker shader path, and
+every one of the four effects gets a read-back line on the HUD:
+
+```
+  live   bl:10.00  ch:6.00  vi:0.40  le:-10.00
+```
+
+Four numbers, every frame, showing what the engine will actually use. The whole
+class of "it is enabled but nothing happens" is visible in that row now, which is
+where F48, F56 and this one all would have been caught in one raid instead of
+three.
+
+---
+
+## F59. The red dot's glass, measured instead of guessed
+
+F54 closed the door on post-processing for a collimator and left the material
+open. The owner asked the right follow-up: *"can we do anything with the surface
+of that glass? Any flare? color of that glass or anything like that?"*
+
+The shader lives in an asset bundle, so nothing readable from `Assembly-CSharp`
+answers it. Rather than build a tint dial and hope a tint property exists, the
+dump was extended to print every collimator's material, its shader, and every
+property **with its current value**. One raid:
+
+```
+MATERIAL scope_base_aimpoint_micro_t1_LOD0_linza
+shader   CW FX/Collimator     renderQueue 4011
+    Color    _Color      = RGBA(1.000, 0.071, 0.071, 1.000)
+    Texture  _NoiseTex   = none
+    Texture  _MarkTex    = scope_base_aimpoint_micro_t1_mark
+    Texture  _FadeTex    = mask2
+    Vector   _MarkShift  = (0.00, -150.00, 0.00, 0.00)
+    Float    _MarkScale  = 1
+    Float    _HDR        = 3
+    KEYWORDS
+```
+
+Seven properties, and the **values** name them better than the names do:
+
+* `_Color` is red, on a sight whose dot is red. It is the reticle colour.
+* `_HDR` is 3, a multiplier above white. That is the dot's headroom, and the main
+  camera's bloom is what turns headroom into glare. **The flare was already wired
+  and simply turned down.**
+* `_MarkTex` / `_MarkShift` / `_MarkScale` are the reticle's texture, parallax
+  offset and size. "Mark" is BSG's word for reticle here, not for a smudge -
+  which the value would not have told me if I had only printed names.
+* `_FadeTex` is the rim falloff.
+* `_NoiseTex` is **empty**, the one free slot on the shader, named exactly like a
+  glass-imperfection input.
+
+**Printing the value, not just the name, is what made this readable.** A property
+list alone would have left `_Color` and `_MarkTex` ambiguous; `RGBA(1, 0.071,
+0.071, 1)` on a red dot is not ambiguous at all.
+
+### What is therefore impossible
+
+There is no albedo, no `_TintColor`, no base map. This shader draws a reticle and
+fades at the edges. It does not colour what is behind it, so a green-tinted
+window is not available at any level of effort, and the honest answer to "colour
+of that glass" is no. What IS available is the colour of the thing drawn ON the
+glass.
+
+### sharedMaterial, and why we write to it anyway
+
+```csharp
+CollimatorSight.Awake:
+    CollimatorMaterial = CollimatorMeshRenderer.sharedMaterial
+```
+
+The instinct is to swap in a per-renderer instance so the asset is never touched.
+That would be wrong here: the game caches and writes to the shared material
+itself, so displaying our own copy would leave the game writing to an asset
+nobody renders, and the in-game reticle brightness control would silently stop
+working. Compatibility means writing where the game writes.
+
+So this captures every value it touches first and restores all four on release.
+These materials are loaded from bundles into memory and nothing here can reach
+disk, so the worst case is a restart rather than a permanently green sight. The
+capture is keyed on the material's instance id, not the renderer's, because two
+sights of one model share a material and capturing it twice would record our own
+written value as the original.
+
+The build check now asserts that every shader property the driver writes is also
+captured and restored, by matching the literal in all three method bodies.
+
+### A test that could only fail
+
+That check was written first as "does `Drive` reference the field `P_Color`", and
+it failed on all four properties. `const string` is **inlined by the compiler**:
+there is no field reference left in the IL, only `ldstr "_Color"`. The test was
+looking for something the compiler had already removed.
+
+F45's rule again from the other side. There the regression test passed on a
+bugged file because the regex matched commented-out code; here it failed on a
+correct file because it matched a construct that does not survive compilation.
+**A check that reads compiled output has to know what the compiler does to the
+source.**
+
+---
+
+## F60. The reticle work is reverted, and it is not what broke the scopes
+
+The owner: *"the changes of the retical didn't work, but it killed the fix we did
+for the scopes, so neither one of these works now."*
+
+Rolled back first, diagnosed second. The reticle driver, its seven config dials,
+its HUD row and the F59 latch change are all removed; the installed binary is the
+one he last ran clean.
+
+Then the log, from the session that went wrong:
+
+```
+line 3783   Optic glass: main mask -1 -> -257 (dropped layer 8).      <- once
+...
+line 6430   MAIN layer  FPS Camera  volumeLayer mask=-1  -> EVERYTHING
+line 6480   MAIN layer  FPS Camera  volumeLayer mask=-1  -> EVERYTHING
+line 6688   MAIN layer  FPS Camera  volumeLayer mask=-1  -> EVERYTHING
+```
+
+The isolation applied **once, in the first raid of the session**, and every later
+raid shows the main camera back at EVERYTHING. F52's fix stops working from the
+second raid onward, and the scope's volume leaks to the whole screen again.
+
+`IsolateFromMainCamera` is called only from `Resolve()`, and `Resolve()` opens
+with:
+
+```csharp
+if (ProfileAlive()) return true;
+```
+
+So once the profile is alive the isolation is never revisited, while the FPS
+Camera it narrowed is a per-raid object that comes back with a fresh mask of -1.
+The isolation is applied to one camera and remembered as if it were a property of
+the session.
+
+**This is not caused by the reticle change.** It is a defect that has been in
+every build since F52 and only shows from the second raid of a session; the
+reticle build is simply when enough back-to-back raids were run to hit it. Saying
+otherwise would be convenient and wrong.
+
+The mechanism above is the leading explanation and not yet proven: whether the
+profile survives the raid transition or the optic camera is rebuilt, what the log
+establishes is narrower and sufficient - **the isolation did not re-apply, and
+nothing checked.** The fix belongs where the check belongs: verify the mask every
+frame in `Drive`, where the effects are already being written, rather than once at
+resolve time.
+
+### The other half of the same mistake
+
+F59 keyed the dump on the collimator count so a red dot would re-dump. That count
+is `FindObjectsOfType<CollimatorSight>` over the whole scene, which counts **every
+bot's red dot**, so it churned 1, 1, 2, 1, 0, 7 and the dump fired **69 times in
+one session**. Reverted with the rest.
+
+Both halves are the same error in different clothes. **State that belongs to an
+object was tracked as if it belonged to the session** - the mask remembered
+against no camera, the dump keyed against a population rather than a fitting. A
+latch is a claim about what can change; get that wrong and it either never fires
+or never stops.

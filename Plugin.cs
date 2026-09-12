@@ -127,6 +127,8 @@ namespace SPTFreeAim
                 new System.Collections.Generic.KeyValuePair<string, BepInEx.Configuration.KeyboardShortcut>(
                     "Yaw write probe key", Cfg.ProbeWriteKey.Value));
 
+            RescueClashingToggle();
+
             Log.LogInfo(NAME + " " + VERSION + " loaded. Mode: " + Cfg.Mode.Value +
                         ". F12 to configure, F8 master toggle, F9 HUD, F10 write probe.");
 
@@ -145,7 +147,12 @@ namespace SPTFreeAim
             // it ran", which is the only thing worth testing.
             if (!_started) return;
 
-            if (Cfg.ToggleKey.Value.IsDown())
+            // A hotkey Tarkov also owns is ignored, not merely warned about.
+            // "Master toggle key = Alpha1" is Tarkov's SecondaryWeapon, so drawing
+            // the pistol toggled the whole mod off, every time, and the only trace
+            // was a pair of ON/OFF lines that read like a deliberate keypress. The
+            // check for this existed and was right; nothing acted on it. F57.
+            if (Cfg.ToggleKey.Value.IsDown() && !Compat.KeyConflicts.IsBlocked("Master toggle key"))
             {
                 Cfg.Enabled.Value = !Cfg.Enabled.Value;
 
@@ -162,17 +169,21 @@ namespace SPTFreeAim
                 if (!Cfg.Enabled.Value) ResetState();
             }
 
-            if (Cfg.HudKey.Value.IsDown())
+            if (Cfg.HudKey.Value.IsDown() && !Compat.KeyConflicts.IsBlocked("HUD toggle key"))
                 Cfg.ShowHud.Value = !Cfg.ShowHud.Value;
 
-            if (Cfg.ProbeWriteKey.Value.IsDown())
+            if (Cfg.ProbeWriteKey.Value.IsDown() && !Compat.KeyConflicts.IsBlocked("Yaw write probe key"))
                 YawWriteProbe.Trigger(Cfg.ProbeWriteDegrees.Value);
 
             YawWriteProbe.Tick();
 
             if (Cfg.StanceGateEnabled.Value)
             {
-                Stance.ReadInput(Cfg.StanceKey.Value, Cfg.StanceHoldToReady.Value);
+                Stance.ReadInput(
+                    Compat.KeyConflicts.IsBlocked("Stance key")
+                        ? new BepInEx.Configuration.KeyboardShortcut()
+                        : Cfg.StanceKey.Value,
+                    Cfg.StanceHoldToReady.Value);
                 Stance.ReadAutoState(
                     FreeAimPatches.LocalPlayer,
                     Cfg.SuspendOnSprint.Value,
@@ -232,6 +243,52 @@ namespace SPTFreeAim
         /// Called when the per-frame path throws. Better to stop cleanly than to
         /// fill the log at 120 Hz and leave the weapon in a broken pose.
         /// </summary>
+        /// <summary>
+        /// Move the master toggle off a key Tarkov owns, once, and say so.
+        ///
+        /// Ignoring a clashing key (see Update) stops the damage but leaves the
+        /// owner with no master toggle at all until he edits a config file he has
+        /// no reason to suspect. The bad value here is one I shipped as a DEFAULT,
+        /// and changing a default does nothing to an install that already saved
+        /// it - BepInEx only writes defaults for keys it has never seen. So the
+        /// repair has to happen in the installed config, not in the source. F57.
+        ///
+        /// Only ever moves a key that is provably clashing, only to a key Tarkov
+        /// does not use, and never silently.
+        /// </summary>
+        private void RescueClashingToggle()
+        {
+            if (!Compat.KeyConflicts.Checked) return;
+            if (!Compat.KeyConflicts.IsBlocked("Master toggle key")) return;
+
+            string was = Cfg.ToggleKey.Value.MainKey.ToString();
+            string why = Compat.KeyConflicts.Why("Master toggle key");
+
+            UnityEngine.KeyCode free = Compat.KeyConflicts.FirstFreeKey(
+                new[]
+                {
+                    UnityEngine.KeyCode.F8, UnityEngine.KeyCode.F11, UnityEngine.KeyCode.F6,
+                    UnityEngine.KeyCode.F5, UnityEngine.KeyCode.Backslash
+                },
+                Cfg.HudKey.Value.MainKey, Cfg.ProbeWriteKey.Value.MainKey, Cfg.StanceKey.Value.MainKey);
+
+            if (free == UnityEngine.KeyCode.None)
+            {
+                Log.LogWarning("Master toggle key " + was + " clashes (" + why +
+                               ") and every fallback key is taken too, so the toggle is IGNORED. " +
+                               "Pick a free key in the F12 menu.");
+                return;
+            }
+
+            Cfg.ToggleKey.Value = new BepInEx.Configuration.KeyboardShortcut(free);
+            Compat.KeyConflicts.Blocked.Remove("Master toggle key");
+            Compat.KeyConflicts.Report = "master toggle moved " + was + " -> " + free;
+
+            Log.LogWarning("Master toggle key was " + was + ", and " + why +
+                           ". Drawing that weapon was switching the mod off. Moved to " + free +
+                           " and saved. Change it in the F12 menu if you want a different key.");
+        }
+
         public void EmergencyDisable()
         {
             _emergencyDisabled = true;

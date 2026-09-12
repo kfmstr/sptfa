@@ -217,7 +217,6 @@ namespace SPTFreeAim.Patches
         {
             FocusDepth.Release();
             OpticHousing.Release();
-            GameRefs.ReleasePrism();
             Compat.OpticStack.Release();
             LocalPlayer = null;
             LocalPwa = null;
@@ -343,22 +342,11 @@ namespace SPTFreeAim.Patches
             {
                 Plugin.Log.LogError("Optic glass failed, switching it off: " + e);
                 cfg.OpticBloom.Value = 0f;
+                cfg.OpticDirt.Value = 0f;
                 cfg.OpticFringe.Value = 0f;
                 cfg.OpticVignette.Value = 0f;
                 cfg.OpticDistortion.Value = 0f;
                 Compat.OpticStack.Release();
-            }
-
-            try { ApplyLensGlare(cfg); }
-            catch (Exception e)
-            {
-                Plugin.Log.LogError("Lens glare failed, switching it off: " + e);
-                // Neutralise the dials rather than flipping a switch that no
-                // longer exists: 1.0 bloom IS stock, and zero is off for the rest.
-                cfg.GlareBloom.Value = 1f;
-                cfg.GlareDirt.Value = 0f;
-                cfg.GlareChromatic.Value = 0f;
-                GameRefs.ReleasePrism();
             }
 
             try { ApplySightTransparency(p, pwa, cfg); }
@@ -915,32 +903,17 @@ namespace SPTFreeAim.Patches
             if (!Compat.OpticStack.Ready && !Compat.OpticStack.Resolve()) return;
 
             _opticGlassDriving = true;
-            Compat.OpticStack.Drive(cfg.OpticBloom.Value, cfg.OpticFringe.Value,
-                                    cfg.OpticVignette.Value, cfg.OpticDistortion.Value);
-        }
-
-        private static bool _glareDriving;
-
-        /// <summary>
-        /// Turn up the lens scattering the game already has.
-        ///
-        /// Not gated on aiming: a lens scatters light whether or not you are
-        /// looking through a sight, and gating it would make the whole screen
-        /// change character every time the weapon comes up.
-        /// </summary>
-        private static void ApplyLensGlare(FreeAimConfig cfg)
-        {
-            if (!cfg.GlareActive)
+            Compat.OpticStack.Drive(new Compat.OpticStack.Glass
             {
-                if (_glareDriving) { _glareDriving = false; GameRefs.ReleasePrism(); }
-                return;
-            }
-
-            if (!GameRefs.HavePrism && !GameRefs.ResolvePrism()) return;
-
-            _glareDriving = true;
-            GameRefs.DrivePrism(cfg.GlareBloom.Value, cfg.GlareThreshold.Value,
-                                cfg.GlareDirt.Value, cfg.GlareChromatic.Value);
+                Bloom          = cfg.OpticBloom.Value,
+                BloomThreshold = cfg.OpticBloomThreshold.Value,
+                BloomSpread    = cfg.OpticBloomSpread.Value,
+                Dirt           = cfg.OpticDirt.Value,
+                Fringe         = cfg.OpticFringe.Value,
+                Vignette       = cfg.OpticVignette.Value,
+                Distortion     = cfg.OpticDistortion.Value,
+                ForceHdr       = cfg.OpticForceHdr.Value
+            });
         }
 
         /// <summary>

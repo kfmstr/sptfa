@@ -101,6 +101,10 @@ namespace SPTFreeAim
         public ConfigEntry<bool> GunRollAboutView;
         public ConfigEntry<float> ShoulderGive;
         public ConfigEntry<float> OpticBloom;
+        public ConfigEntry<float> OpticBloomThreshold;
+        public ConfigEntry<float> OpticBloomSpread;
+        public ConfigEntry<bool>  OpticForceHdr;
+        public ConfigEntry<float> OpticDirt;
         public ConfigEntry<float> OpticFringe;
         public ConfigEntry<float> OpticVignette;
         public ConfigEntry<float> OpticDistortion;
@@ -114,6 +118,7 @@ namespace SPTFreeAim
             get
             {
                 return OpticBloom.Value > 0.001f
+                    || OpticDirt.Value > 0.001f
                     || OpticFringe.Value > 0.001f
                     || OpticVignette.Value > 0.001f
                     || Mathf.Abs(OpticDistortion.Value) > 0.001f;
@@ -127,16 +132,6 @@ namespace SPTFreeAim
         // F44). Every one of these is derived from its own numbers instead, the
         // way "Shoulder give" always was: a value that means "nothing" IS the off
         // switch, and there is only one thing to set.
-        public bool GlareActive
-        {
-            get
-            {
-                return GlareBloom.Value > 0.001f
-                    || GlareDirt.Value > 0.001f
-                    || GlareChromatic.Value > 0.001f;
-            }
-        }
-
         public bool BodyLeanActive
         {
             get
@@ -145,10 +140,6 @@ namespace SPTFreeAim
                     || Mathf.Abs(BodyLeanReady.Value) > 0.01f;
             }
         }
-        public ConfigEntry<float> GlareBloom;
-        public ConfigEntry<float> GlareThreshold;
-        public ConfigEntry<float> GlareDirt;
-        public ConfigEntry<float> GlareChromatic;
         public ConfigEntry<float> BodyLeanAimed;
         public ConfigEntry<float> BodyLeanReady;
         public ConfigEntry<bool> InvertBodyLean;
@@ -549,42 +540,6 @@ namespace SPTFreeAim
                 "low ready, with the muzzle at the floor, it reads as a twist rather than a cant. " +
                 "Use it only if the barrel axis turns out to be wrong on some weapon.");
 
-            GlareBloom = cfg.Bind(S_BODY, "Glare: bloom", 0f, new ConfigDescription(
-                "Light scattering off the glass, the way it does on a camera lens.\n" +
-                "\n" +
-                "An ABSOLUTE intensity, and 0 is off - there is no separate switch to remember.\n" +
-                "\n" +
-                "This used to be a multiplier on the game's own bloom, which was a mistake: some " +
-                "graphics mods set Prism's bloom to ZERO and render their own, and no multiplier " +
-                "can lift zero. Try 1 to 3 here; past 4 the whole screen hazes over.\n" +
-                "\n" +
-                "This drives Prism, which Tarkov already runs on the camera and already writes to " +
-                "itself for noise, auto exposure and the near-miss vignette. Same move as the gun " +
-                "blur: turn up what is already in the render order. Everything it touches is " +
-                "captured first and handed back. See F43.",
-                new AcceptableValueRange<float>(0f, 5f)));
-
-            GlareThreshold = cfg.Bind(S_BODY, "Glare: threshold", 0f, new ConfigDescription(
-                "How bright a pixel must be before it blooms. LOWER means more of the scene glows, " +
-                "which is what a dirty or cheap lens does. Leave at 0 to keep the game's own value " +
-                "- this one is worth changing only after the bloom multiplier is where you want it.",
-                new AcceptableValueRange<float>(0f, 3f)));
-
-            GlareDirt = cfg.Bind(S_BODY, "Glare: lens dirt", 0f, new ConfigDescription(
-                "Modulates the bloom through the lens-dirt texture, which is the difference between " +
-                "a GLOW and light scattering off a piece of glass with something on it. This is the " +
-                "single setting that most makes it read as a lens.\n" +
-                "\n" +
-                "Does nothing if the build ships no dirt texture - the log says which on the first " +
-                "raid, rather than leaving you turning a dial that cannot move.",
-                new AcceptableValueRange<float>(0f, 3f)));
-
-            GlareChromatic = cfg.Bind(S_BODY, "Glare: colour fringing", 0f, new ConfigDescription(
-                "Splits the colour channels toward the edges of the frame - the rainbow edging real " +
-                "glass produces and every bodycam shows. Small numbers only; this is one people " +
-                "notice as a headache long before they notice it as realism.",
-                new AcceptableValueRange<float>(0f, 2f)));
-
             BodyLeanAimed = cfg.Bind(S_BODY, "Body lean aimed (deg)", 0f, new ConfigDescription(
                 "The counterbalance. Swing the weapon right and your torso leans LEFT - the mass " +
                 "goes one way and the spine goes the other to keep the weight over your feet. On a " +
@@ -694,16 +649,63 @@ namespace SPTFreeAim
                 "where EFT keeps its albedo instead of assuming.");
 
             OpticBloom = cfg.Bind(S_OPTIC, "Optic: bloom", 0f, new ConfigDescription(
-                "Light blooming INSIDE the scope image only - the bright hotspot on the glass, " +
-                "without hazing over the rest of the screen.\n" +
+                "How hard light blooms INSIDE the scope image. Nothing outside the tube.\n" +
                 "\n" +
-                "The scope is a view inside a view: Tarkov renders it with its own camera and its " +
-                "own post stack. These four dials drive THAT stack, so they touch nothing outside " +
-                "the tube. 0 is off. Try 1 to 3.\n" +
+                "0 is off. 1 to 3 is a lens catching the light. The ceiling is 30 because PPv2 " +
+                "puts no upper bound on this at all, and the old cap of 5 was mine, not the " +
+                "engine's - a bright lamp should be able to blow out.\n" +
                 "\n" +
-                "The stack ships with only ScreenSpaceReflections in it, so these effects are " +
-                "created and added at runtime, and removed again when you turn them off. See F49.",
+                "IF TURNING THIS UP JUST HAZES THE WHOLE TUBE, the dial you actually want is " +
+                "'Optic: bloom threshold'. Intensity decides how hard things bloom; threshold " +
+                "decides WHAT blooms. Raise the threshold so only the lamp qualifies, then this " +
+                "can go as high as you like and the rest of the image stays put.",
+                new AcceptableValueRange<float>(0f, 30f)));
+
+            OpticBloomThreshold = cfg.Bind(S_OPTIC, "Optic: bloom threshold", 0.9f, new ConfigDescription(
+                "How bright a pixel has to be before it blooms at all. This is the dial that " +
+                "makes a LAMP glow instead of the whole picture glowing.\n" +
+                "\n" +
+                "LOWER and more of the scene blooms, which reads as a dirty or cheap lens. " +
+                "HIGHER and only genuinely bright things do, which is what lets you push " +
+                "'Optic: bloom' up hard without washing the tube out. Around 1.2 to 2 keeps it " +
+                "to lamps, muzzle flash and sky.\n" +
+                "\n" +
+                "Gamma-space, so it lines up with how bright things look rather than with the " +
+                "raw HDR numbers.",
                 new AcceptableValueRange<float>(0f, 5f)));
+
+            OpticBloomSpread = cfg.Bind(S_OPTIC, "Optic: bloom spread", 7f, new ConfigDescription(
+                "How far the glow reaches out from the bright thing. Low is a tight halo right " +
+                "at the source; high is a wide bloom across the tube. 10 is the engine's maximum " +
+                "and is what a big light seen through glass looks like.\n" +
+                "\n" +
+                "This changes an internal iteration count, so move it in whole steps and do not " +
+                "sweep it while looking at something bright.",
+                new AcceptableValueRange<float>(1f, 10f)));
+
+            OpticForceHdr = cfg.Bind(S_OPTIC, "Optic: allow bright light in the scope", true,
+                "Leave this on unless the scope image starts looking wrong.\n" +
+                "\n" +
+                "Tarkov renders the scope into an ARGB32 texture unless the optic camera allows " +
+                "HDR, and ARGB32 stops at white. In that buffer a bright lamp and a white wall " +
+                "are the SAME NUMBER, so bloom has nothing to pick out and a bloom threshold " +
+                "above 1.0 selects nothing at all.\n" +
+                "\n" +
+                "On, and the scope camera is switched to HDR and its texture rebuilt through the " +
+                "game's own SetResolution, so light can be brighter than white and the lamp can " +
+                "actually blow out. Costs a little memory. Put back when you turn the glass " +
+                "effects off. The HUD says which format the scope is in either way.");
+
+            OpticDirt = cfg.Bind(S_OPTIC, "Optic: lens dirt", 0f, new ConfigDescription(
+                "The one that most makes it read as GLASS rather than as a glow.\n" +
+                "\n" +
+                "It modulates the bloom through Tarkov's own lens-dirt texture, so light does not " +
+                "just brighten, it scatters off whatever is on the lens. Inside the tube only.\n" +
+                "\n" +
+                "IT RIDES ON BLOOM. Dirt with 'Optic: bloom' at 0 has nothing to modulate and can " +
+                "show nothing at all, so turn the bloom up first. The HUD says 'no dirt texture' " +
+                "if this build ships none, rather than leaving you turning a dial that cannot move.",
+                new AcceptableValueRange<float>(0f, 3f)));
 
             OpticFringe = cfg.Bind(S_OPTIC, "Optic: colour fringing", 0f, new ConfigDescription(
                 "Colour separating toward the edge of the scope image, the way real glass does. " +

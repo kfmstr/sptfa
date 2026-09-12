@@ -102,19 +102,29 @@ namespace SPTFreeAim.Debugging
                         ? string.Format("<color=#7fd1b9>{0,6:F3} m</color>   max {1:F3}",
                               FreeAimPatches.LastGive, cfg.ShoulderGive.Value)
                         : "off") +
-                Row("lens glare", cfg.GlareActive
-                        ? (GameRefs.HavePrism
-                              ? string.Format("<color=#7fd1b9>bloom x{0:F2}</color>  dirt {1:F2}{2}  fringe {3:F2}",
-                                    cfg.GlareBloom.Value, cfg.GlareDirt.Value,
-                                    GameRefs.PrismHasDirtTexture ? "" : " <color=#ffcc55>(no texture)</color>",
-                                    cfg.GlareChromatic.Value) + "   " + GameRefs.PrismVerdict
-                              : "<color=#ffcc55>" + GameRefs.PrismWhyNot + "</color>")
-                        : "off") +
+                // The sight row goes first and shows whether the dials below it
+                // CAN apply at all. Every glass effect needs a magnified optic to
+                // land in; a raid went into tuning them under a holo sight, which
+                // has no scope image to tune (F54). "Why is nothing happening"
+                // has to be answered on screen, above the dials, not in a log.
+                Row("sight", Compat.OpticStack.HaveOpticCamera
+                        ? "<color=#7fd1b9>" + Compat.OpticStack.SightKind + "</color>"
+                        : "<color=#ffcc55>" + Compat.OpticStack.SightKind + "</color>") +
                 Row("optic glass", cfg.OpticGlassActive
                         ? (Compat.OpticStack.Ready
-                              ? string.Format("<color=#7fd1b9>bloom {0:F1}</color> fringe {1:F2} rim {2:F2} bow {3:F2}",
-                                    cfg.OpticBloom.Value, cfg.OpticFringe.Value,
-                                    cfg.OpticVignette.Value, cfg.OpticDistortion.Value)
+                              ? string.Format("<color=#7fd1b9>bloom {0:F1}</color> over {1:F1} spread {2:F0} dirt {3:F1} fringe {4:F2} rim {5:F2} bow {6:F2}",
+                                    cfg.OpticBloom.Value, cfg.OpticBloomThreshold.Value,
+                                    cfg.OpticBloomSpread.Value, cfg.OpticDirt.Value,
+                                    cfg.OpticFringe.Value, cfg.OpticVignette.Value,
+                                    cfg.OpticDistortion.Value)
+                                + "\n" + Row("  scope buffer",
+                                      (Compat.OpticStack.ScopeIsHdr
+                                          ? "<color=#7fd1b9>" + Compat.OpticStack.HdrReport + "</color>"
+                                          : "<color=#ffcc55>" + Compat.OpticStack.HdrReport + "</color>")
+                                      + "   bloom " + Compat.OpticStack.BloomVerdict
+                                      + "   " + Compat.OpticStack.DirtStatus).TrimEnd('\n')
+                                + "\n" + Row("  live", Compat.OpticStack.FxVerdict).TrimEnd('\n')
+                                + "\n" + Row("  isolation", Compat.OpticStack.Isolation).TrimEnd('\n')
                               : "<color=#ffcc55>" + Compat.OpticStack.Status + "</color>")
                         : "off") +
                 Row("sight alpha", cfg.SightAlpha.Value > 0.001f
@@ -126,9 +136,12 @@ namespace SPTFreeAim.Debugging
                                     + (GameRefs.IsHoldingBreath(FreeAimPatches.LocalPlayer) ? "HELD" : "-")
                               : "<color=#ffcc55>" + GameRefs.AimFovWhyNot + "</color>")
                         : "stock Tarkov") +
-                Row("key clashes", Compat.KeyConflicts.Report.StartsWith("no clashes")
+                Row("hotkeys", Compat.KeyConflicts.Report.StartsWith("no clashes")
                         ? Compat.KeyConflicts.Report
                         : "<color=#ff6666>" + Compat.KeyConflicts.Report + "</color>") +
+                Row("master toggle", Compat.KeyConflicts.IsBlocked("Master toggle key")
+                        ? "<color=#ff6666>IGNORED - " + Compat.KeyConflicts.Why("Master toggle key") + "</color>"
+                        : cfg.ToggleKey.Value.MainKey.ToString()) +
                 Row("parentage", FreeAimPatches.ParentageReport) +
                 Row("cone / cap", string.Format("{0:F1} / {1:F1} deg", cfg.ConeDegrees.Value, cfg.CapDegrees.Value)) +
                 Row("k / push", string.Format("{0:F1} / {1:F2}", cfg.SpringK.Value, cfg.PushFactor.Value)) +
@@ -142,8 +155,11 @@ namespace SPTFreeAim.Debugging
 
             // Grows with the rows. A clipped HUD is a HUD you stop trusting, and
             // the hinge row is wider now that it prints the live pivot.
-            GUI.Box(new Rect(10, 10, 560, 450), GUIContent.none, _boxStyle);
-            GUI.Label(new Rect(20, 18, 540, 434), "<b>SPT Free Aim</b>\n\n" + body, _style);
+            // Wider and taller than it looks like it needs: the optic glass row
+            // now carries seven numbers plus the isolation report, and a clipped
+            // HUD is a HUD you stop trusting. The sight row added one line.
+            GUI.Box(new Rect(10, 10, 800, 470), GUIContent.none, _boxStyle);
+            GUI.Label(new Rect(20, 18, 780, 454), "<b>SPT Free Aim</b>\n\n" + body, _style);
         }
 
 

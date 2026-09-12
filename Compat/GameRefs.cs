@@ -1126,12 +1126,14 @@ namespace SPTFreeAim.Compat
         // Note the old DumpLensMaterialOnce was never called from anywhere. It sat
         // in the codebase looking like a working diagnostic for several rounds.
 
-        private static bool _opticDumped;
-        private static bool _opticDumpDeferred;
+        // Keyed on the sight, not a bool: switching from a holo to a scope is a
+        // different lens with a different shader, and dumping only the first one
+        // answers half the question. F51.
+        private static object _dumpedSight;
 
         public static void DumpOpticSetupOnce()
         {
-            if (_opticDumped) return;
+            // re-dumps whenever the fitted sight changes
 
             try
             {
@@ -1156,11 +1158,30 @@ namespace SPTFreeAim.Compat
                 var sb = new StringBuilder();
                 sb.AppendLine("=== OPTIC SETUP DUMP (docs/07-FINDINGS.md F43) ===");
 
-                // ---- the optic's own post-process volume ----
+                // ---- how the two post stacks are ROUTED ----
+                //
+                // The effects landed in the optic profile and showed up on the
+                // MAIN view. In PostProcessing v2 a volume is applied by any
+                // PostProcessLayer whose volumeLayer mask includes the volume's
+                // GameObject layer - a volume does not belong to a camera, it is
+                // picked up by whoever is looking for its layer. So the routing is
+                // the whole question, and it is four numbers. F51.
                 FieldInfo fVol = tOcm.GetField("_postProcessVolume",
                     BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
                 object vol = fVol == null ? null : fVol.GetValue(ocm);
                 sb.AppendLine("optic post volume: " + (vol == null ? "NULL" : vol.GetType().FullName));
+
+                FieldInfo fOpticLayer = tOcm.GetField("_postProcessLayer",
+                    BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
+                DescribeRouting(sb, "OPTIC", vol, fOpticLayer == null ? null : fOpticLayer.GetValue(ocm));
+
+                FieldInfo fMainVol = camMgr.GetField("_postProcessVolume",
+                    BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
+                FieldInfo fMainLayer = camMgr.GetField("_postProcessLayer",
+                    BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
+                DescribeRouting(sb, "MAIN",
+                    fMainVol == null ? null : fMainVol.GetValue(inst),
+                    fMainLayer == null ? null : fMainLayer.GetValue(inst));
 
                 if (vol != null)
                 {
@@ -1209,31 +1230,106 @@ namespace SPTFreeAim.Compat
                         }
                 }
 
-                // Only latch once a sight was actually fitted. The first version
-                // latched on the first call, which happened before any optic
-                // existed, so it printed "NONE FITTED" once and never ran again -
-                // and the lens-material half, the only half transparency needs,
-                // never appeared at all. A diagnostic that fires before the thing
-                // it diagnoses exists is a diagnostic that never fires. F48.
-                if (sight == null)
+                // ---- the collimator glass, which has no camera and no stack ----
+                //
+                // A holo or red dot is a MeshRenderer with a Material on it:
+                //
+                //     CollimatorSight.Awake:
+                //         CollimatorMeshRenderer = GetComponent<MeshRenderer>()
+                //         CollimatorMaterial     = CollimatorMeshRenderer.sharedMaterial
+                //
+                // No camera, no render texture, no PostProcessVolume, so every
+                // post-processing trick in this mod is unavailable there by
+                // construction (F54). What IS available is that material, and
+                // nothing in the code says what its shader exposes because the
+                // shader lives in an asset bundle. So ask it. F59.
+                //
+                // Note sharedMaterial: it is the ASSET, shared by every sight of
+                // that type, and a write to it outlives the raid. Read-only here.
+                int collimators = 0;
+                try
                 {
-                    if (!_opticDumpDeferred)
+                    Type tColl = asmCSharp.GetType("CollimatorSight", false);
+                    if (tColl == null) sb.AppendLine("collimator type not found");
+                    else
                     {
-                        _opticDumpDeferred = true;
-                        Plugin.Log.LogInfo("Optic setup: no sight fitted yet - will dump when one is. "
-                                           + "Volume profile listed above.");
-                        Plugin.Log.LogInfo(sb.ToString());
+                        UnityEngine.Object[] found = UnityEngine.Object.FindObjectsOfType(tColl);
+                        sb.AppendLine("collimator sights in scene: " + found.Length);
+
+                        foreach (UnityEngine.Object c in found)
+                        {
+                            if (c == null) continue;
+                            collimators++;
+                            var go = GetMemberValue(c, "gameObject") as GameObject;
+                            var mr = GetMemberValue(c, "CollimatorMeshRenderer") as Renderer;
+                            sb.AppendLine("  COLLIMATOR " + (go == null ? "?" : go.name) +
+                                          "   renderer " + (mr == null ? "NULL" : mr.name) +
+                                          "   enabled " + (mr != null && mr.enabled));
+                            if (mr == null) continue;
+
+                            foreach (Material mat in mr.sharedMaterials)
+                            {
+                                if (mat == null) continue;
+                                Shader sh = mat.shader;
+                                sb.AppendLine("    MATERIAL " + mat.name + "   shader " +
+                                              (sh == null ? "NULL" : sh.name) +
+                                              "   renderQueue " + mat.renderQueue);
+                                if (sh == null) continue;
+
+                                int pn = sh.GetPropertyCount();
+                                for (int i = 0; i < pn; i++)
+                                {
+                                    string pname = sh.GetPropertyName(i);
+                                    string ptype = sh.GetPropertyType(i).ToString();
+
+                                    // The VALUE matters as much as the name: a
+                                    // colour property sitting at black and one at
+                                    // white are the difference between a dial that
+                                    // tints and a dial that does nothing.
+                                    string val = "";
+                                    try
+                                    {
+                                        if (ptype == "Color") val = "  = " + mat.GetColor(pname);
+                                        else if (ptype == "Float" || ptype == "Range") val = "  = " + mat.GetFloat(pname);
+                                        else if (ptype == "Vector") val = "  = " + mat.GetVector(pname);
+                                        else if (ptype == "Texture")
+                                        {
+                                            Texture t = mat.GetTexture(pname);
+                                            val = "  = " + (t == null ? "none" : t.name);
+                                        }
+                                    }
+                                    catch { }
+
+                                    sb.AppendLine("        " + ptype.PadRight(9) + pname + val);
+                                }
+                                sb.AppendLine("        KEYWORDS " + string.Join(" ", mat.shaderKeywords));
+                            }
+                        }
                     }
-                    return;
+                }
+                catch (Exception ce)
+                {
+                    sb.AppendLine("collimator dump failed: " + Explain(ce));
                 }
 
-                _opticDumped = true;
+                // The latch is keyed on BOTH what is fitted: the optic sight
+                // instance and how many collimators are in the scene.
+                //
+                // Keyed on the optic alone it printed once, before anything was
+                // fitted, and never again (F48). Keyed on the optic alone it ALSO
+                // never printed for a red dot, because a red dot leaves
+                // CurrentOpticSight null - so the one case this dump was added for
+                // would have been the one case it stayed silent on. A diagnostic
+                // has to key on everything it reports, not on the first thing it
+                // happened to report.
+                if (ReferenceEquals(sight, _dumpedSight)) return;
+                _dumpedSight = sight;
                 Plugin.Log.LogInfo(sb.ToString());
             }
             catch (Exception e)
             {
-                _opticDumped = true;
-                Plugin.Log.LogWarning("Optic setup dump failed: " + e.Message);
+                _dumpedSight = new object();   // stop retrying a throwing dump
+                Plugin.Log.LogWarning("Optic setup dump failed: " + Explain(e));
             }
         }
 
@@ -1281,6 +1377,72 @@ namespace SPTFreeAim.Compat
             catch { return null; }
         }
 
+        /// <summary>
+        /// Print who applies what. A PPv2 volume is not owned by a camera: every
+        /// PostProcessLayer applies every volume whose GameObject layer is in that
+        /// layer's volumeLayer mask. If the main camera's mask includes the optic
+        /// volume's layer, effects added "to the scope" appear on the whole screen,
+        /// which is exactly what the owner reported. F51.
+        /// </summary>
+        private static void DescribeRouting(StringBuilder sb, string label, object volume, object layer)
+        {
+            if (volume != null)
+            {
+                var go = GetMemberValue(volume, "gameObject") as GameObject;
+                sb.AppendLine("  " + label + " volume  obj=" + (go == null ? "?" : go.name)
+                    + "  layer=" + (go == null ? -1 : go.layer)
+                    + " (" + (go == null ? "?" : LayerMask.LayerToName(go.layer)) + ")"
+                    + "  isGlobal=" + GetMemberValue(volume, "isGlobal")
+                    + "  priority=" + GetMemberValue(volume, "priority")
+                    + "  weight=" + GetMemberValue(volume, "weight")
+                    + "  enabled=" + GetMemberValue(volume, "enabled"));
+            }
+            else sb.AppendLine("  " + label + " volume  NULL");
+
+            if (layer != null)
+            {
+                var go = GetMemberValue(layer, "gameObject") as GameObject;
+                object mask = GetMemberValue(layer, "volumeLayer");
+                int maskValue = 0;
+                bool maskRead = false;
+                if (mask != null)
+                {
+                    object v = GetMemberValue(mask, "value");
+                    if (v is int) { maskValue = (int)v; maskRead = true; }
+                }
+
+                sb.AppendLine("  " + label + " layer   obj=" + (go == null ? "?" : go.name)
+                    + "  enabled=" + GetMemberValue(layer, "enabled")
+                    + "  volumeLayer mask=" + (maskRead ? maskValue.ToString() : "UNREADABLE")
+                    + "  -> " + (maskRead ? MaskNames(maskValue) : "could not read"));
+            }
+            else sb.AppendLine("  " + label + " layer   NULL");
+        }
+
+        /// <summary>
+        /// Decode a LayerMask.
+        ///
+        /// -1 is EVERYTHING, not an error. The first version of this used -1 as
+        /// its own failure sentinel and printed "unreadable" for it - so the
+        /// diagnostic built to answer "why does the scope volume reach the main
+        /// camera" hid the answer, which was that both masks are Everything.
+        /// A sentinel that collides with a real value is not a sentinel. F52.
+        /// </summary>
+        private static string MaskNames(int mask)
+        {
+            if (mask == -1) return "EVERYTHING (applies volumes on every layer)";
+            if (mask == 0) return "NOTHING (this layer applies no volumes at all)";
+
+            var names = new List<string>();
+            for (int i = 0; i < 32; i++)
+            {
+                if ((mask & (1 << i)) == 0) continue;
+                string n = LayerMask.LayerToName(i);
+                names.Add(i + ":" + (string.IsNullOrEmpty(n) ? "(unnamed)" : n));
+            }
+            return names.Count == 0 ? "none" : string.Join(", ", names.ToArray());
+        }
+
         private static object GetMemberValue(object target, string name)
         {
             if (target == null) return null;
@@ -1292,27 +1454,22 @@ namespace SPTFreeAim.Compat
             return null;
         }
 
-        // ================= Lens glare (Prism) ============================
+        // ================= The dirt texture, borrowed ====================
         //
-        // Tarkov ships Prism, and CameraManager already holds one:
+        // What used to live here drove Tarkov's PrismEffects - useBloom,
+        // bloomIntensity, useLensDirt, chromaticIntensity - and it worked
+        // exactly as built. That was the problem. PrismEffects is a component
+        // on the MAIN camera; it has no notion of a scope. Every value written
+        // here lands on the whole player view, and no amount of tuning moves it
+        // onto the glass. The owner said so four times. F54.
         //
-        //     CameraManager._prismEffects : PrismEffects
+        // One thing in Prism is still worth having: the lens dirt TEXTURE. Bloom
+        // on its own reads as a glow; bloom modulated by a dirt texture reads as
+        // light scattering off GLASS, which is what a lens does and what the
+        // reference footage shows. PPv2's Bloom takes a dirtTexture too, so the
+        // texture moves to the scope's own stack and the driving stays there.
         //
-        // assigned in method_2 and already written to by the game itself
-        // (SetNoise, EnableAutoExposure, FlyingBulletSoundPlayer's vignette). So
-        // this is the same shape as the depth of field in F36 - drive what is
-        // already in the render order rather than adding a pass beside it. F43.
-        //
-        // What it carries, all public instance fields:
-        //
-        //     useBloom, bloomType, bloomIntensity, bloomThreshold, bloomBlurPasses
-        //     useLensDirt, lensDirtTexture, dirtIntensity
-        //     useRays, rayTransform, rayWeight, rayColor, rayThreshold
-        //     useChromaticAberration, chromaticIntensity, aberrationType
-        //
-        // Lens dirt is the one that matters most. Bloom on its own reads as a
-        // glow; bloom modulated by a dirt texture reads as light scattering off
-        // GLASS, which is what a lens does and what the reference footage shows.
+        // Read-only. Nothing in this file writes to PrismEffects any more.
 
         /// <summary>
         /// Reflection hides the real error. FieldInfo/PropertyInfo/MethodInfo
@@ -1321,7 +1478,7 @@ namespace SPTFreeAim.Compat
         /// the message - which is exactly how the depth of field spent a whole
         /// raid failing without saying why (docs/07-FINDINGS.md F46).
         /// </summary>
-        private static string Explain(Exception e)
+        public static string Explain(Exception e)
         {
             Exception inner = e;
             while (inner is TargetInvocationException && inner.InnerException != null)
@@ -1332,204 +1489,51 @@ namespace SPTFreeAim.Compat
                 : e.GetType().Name + " wrapping " + inner.GetType().Name + ": " + inner.Message;
         }
 
-        private static object _prism;
-        private static readonly string[] PrismDriven =
+        /// <summary>
+        /// Tarkov's own lens dirt texture, for the optic stack's Bloom to reuse.
+        /// Null is normal and not an error - it just means the dirt dial has
+        /// nothing to modulate, which OpticStack reports rather than hiding.
+        /// </summary>
+        public static Texture PrismDirtTexture()
         {
-            "useBloom", "bloomIntensity", "bloomThreshold",
-            "useLensDirt", "dirtIntensity",
-            "useChromaticAberration", "chromaticIntensity"
-        };
-        private static readonly Dictionary<string, FieldInfo> _prismFields =
-            new Dictionary<string, FieldInfo>();
-        private static readonly Dictionary<string, object> _prismStock =
-            new Dictionary<string, object>();
-
-        public static bool HavePrism { get { return _prism != null; } }
-        public static string PrismWhyNot = "not resolved yet";
-        public static bool PrismHasDirtTexture;
-
-        public static bool ResolvePrism()
-        {
+            if (_dirtChecked) return _dirtTexture;
+            _dirtChecked = true;
             try
             {
                 Assembly asmCSharp = AppDomain.CurrentDomain.GetAssemblies()
                     .FirstOrDefault(a => a.GetName().Name == "Assembly-CSharp");
-                if (asmCSharp == null) { PrismWhyNot = "Assembly-CSharp not loaded"; return false; }
+                if (asmCSharp == null) return null;
 
                 Type camMgr = asmCSharp.GetType("EFT.CameraControl.CameraManager", false);
-                if (camMgr == null) { PrismWhyNot = "CameraManager not found"; return false; }
+                if (camMgr == null) return null;
 
                 PropertyInfo instProp = camMgr.GetProperty("Instance",
                     BindingFlags.Static | BindingFlags.Public | BindingFlags.NonPublic);
                 object inst = instProp == null ? null : instProp.GetValue(null, null);
-                if (inst == null) { PrismWhyNot = "CameraManager.Instance is null (not in a raid yet)"; return false; }
+                if (inst == null) { _dirtChecked = false; return null; }   // not in a raid yet
 
                 FieldInfo fPrism = camMgr.GetField("_prismEffects",
                     BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
-                if (fPrism == null) { PrismWhyNot = "CameraManager._prismEffects not found"; return false; }
+                object prism = fPrism == null ? null : fPrism.GetValue(inst);
+                if (prism == null) { _dirtChecked = false; return null; }
 
-                object prism = fPrism.GetValue(inst);
-                if (prism == null) { PrismWhyNot = "_prismEffects is null on this scene"; return false; }
+                FieldInfo fTex = prism.GetType().GetField("lensDirtTexture",
+                    BindingFlags.Instance | BindingFlags.Public);
+                _dirtTexture = fTex == null ? null : fTex.GetValue(prism) as Texture;
 
-                Type t = prism.GetType();
-                _prismFields.Clear();
-                _prismStock.Clear();
-
-                foreach (string n in PrismDriven)
-                {
-                    FieldInfo f = t.GetField(n, BindingFlags.Instance | BindingFlags.Public);
-                    if (f == null) continue;
-                    _prismFields[n] = f;
-                    _prismStock[n] = f.GetValue(prism);
-                }
-
-                if (!_prismFields.ContainsKey("bloomIntensity"))
-                {
-                    PrismWhyNot = "PrismEffects has no bloomIntensity - shape changed on " + t.FullName;
-                    return false;
-                }
-
-                // Lens dirt without a texture is a silent no-op: the effect runs,
-                // multiplies by nothing, and draws no difference. Say so rather
-                // than letting the owner turn a dial that cannot move. F34.
-                FieldInfo fTex = t.GetField("lensDirtTexture", BindingFlags.Instance | BindingFlags.Public);
-                PrismHasDirtTexture = fTex != null && fTex.GetValue(prism) != null;
-
-                _prism = prism;
-
-                Plugin.Log.LogInfo(string.Format(
-                    "Lens glare: driving {0}. {1} of {2} fields found, lens dirt texture {3}.",
-                    t.FullName, _prismFields.Count, PrismDriven.Length,
-                    PrismHasDirtTexture ? "PRESENT" : "MISSING - dirt will do nothing"));
-                return true;
+                Plugin.Log.LogInfo("Optic glass: Tarkov's lens dirt texture is " +
+                    (_dirtTexture == null ? "MISSING - the dirt dial will have nothing to modulate"
+                                          : "PRESENT (" + _dirtTexture.name + ")"));
             }
             catch (Exception e)
             {
-                PrismWhyNot = e.GetType().Name + ": " + e.Message;
-                return false;
+                Plugin.Log.LogWarning("Optic glass: could not read the dirt texture - " + Explain(e));
             }
+            return _dirtTexture;
         }
 
-        private static void PrismSet(string name, object value)
-        {
-            FieldInfo f;
-            if (_prismFields.TryGetValue(name, out f)) f.SetValue(_prism, value);
-        }
-
-        /// <summary>
-        /// Push the glare settings. Bloom is scaled rather than replaced, so a
-        /// strength of 1 means "the game's own amount" and the dial reads as a
-        /// multiplier on whatever BSG tuned rather than an absolute nobody can
-        /// picture.
-        /// </summary>
-        public static void DrivePrism(float bloomMul, float threshold, float dirt, float chromatic)
-        {
-            if (_prism == null) return;
-            try
-            {
-                // ABSOLUTE, not a multiplier.
-                //
-                // It used to be `stockBloom * dial`, on the reasoning that 1.0
-                // would then mean "stock Tarkov" and the number would be easy to
-                // picture. On this install Amands Graphics sets Prism's own bloom
-                // to ZERO and renders its own, so stock was 0 and the dial was
-                // arithmetically incapable of doing anything: 0 x 5 = 0. The
-                // read-back reported "value stuck (0.00)" and was exactly right.
-                //
-                // A scale factor is only intuitive while the thing it scales is
-                // non-zero. An absolute cannot be defeated that way. F48.
-                PrismSet("useBloom", true);
-                PrismSet("bloomIntensity", bloomMul);
-                if (threshold > 0f) PrismSet("bloomThreshold", threshold);
-
-                if (dirt > 0.001f && PrismHasDirtTexture)
-                {
-                    PrismSet("useLensDirt", true);
-                    PrismSet("dirtIntensity", dirt);
-                }
-
-                if (chromatic > 0.001f)
-                {
-                    PrismSet("useChromaticAberration", true);
-                    PrismSet("chromaticIntensity", chromatic);
-                }
-
-                VerifyPrismStuck(bloomMul);
-            }
-            catch (Exception e)
-            {
-                PrismWhyNot = Explain(e) + " while writing - giving up";
-                Plugin.Log.LogWarning("Lens glare: " + PrismWhyNot);
-                _prism = null;
-            }
-        }
-
-        private static bool _prismVerified;
-        public static string PrismVerdict = "not checked yet";
-
-        /// <summary>
-        /// Write, then read back.
-        ///
-        /// Three other mods patch PrismEffects on this install - Amands Graphics,
-        /// Amands Sense and Smajlec Lights - and Amands Graphics carries its own
-        /// Bloom Intensity and ChromaticAberration. A write that lands in the
-        /// field is still not a write that survives to the next frame, or that
-        /// anything renders.
-        ///
-        /// So this reads the value back one frame later and reports which of the
-        /// three worlds we are in, instead of leaving "no effect" to be argued
-        /// about:
-        ///
-        ///   value gone      -> something overwrites us; a mod owns this field
-        ///   value stuck     -> Prism has our number, so if nothing is visible the
-        ///                      rendering is happening somewhere else
-        ///
-        /// F34's rule, one level further out: an API call that succeeds is not an
-        /// API call that did something, and a field that accepts a value is not a
-        /// field that keeps it.
-        /// </summary>
-        private static void VerifyPrismStuck(float expectedBloom)
-        {
-            if (_prismVerified) return;
-
-            FieldInfo f;
-            if (!_prismFields.TryGetValue("bloomIntensity", out f)) return;
-
-            object now = f.GetValue(_prism);
-            if (!(now is float)) return;
-
-            float actual = (float)now;
-            _prismVerified = true;
-
-            if (Mathf.Abs(actual - expectedBloom) > 0.01f)
-            {
-                PrismVerdict = string.Format(
-                    "OVERWRITTEN - wrote {0:F2}, read back {1:F2}", expectedBloom, actual);
-                Plugin.Log.LogWarning(
-                    "Lens glare: " + PrismVerdict + ". Another mod owns PrismEffects.bloomIntensity - " +
-                    "Amands Graphics, Amands Sense and Smajlec Lights all patch PrismEffects. " +
-                    "Turn that mod's bloom down instead, or turn it off, and this dial will bite.");
-            }
-            else
-            {
-                PrismVerdict = string.Format("value stuck ({0:F2})", actual);
-                Plugin.Log.LogInfo(
-                    "Lens glare: " + PrismVerdict + ". Prism holds our number, so if nothing looks " +
-                    "different another mod is doing the bloom rendering itself rather than through " +
-                    "this component.");
-            }
-        }
-
-        /// <summary>Hand every stock value back. Never throws.</summary>
-        public static void ReleasePrism()
-        {
-            if (_prism == null || _prismStock.Count == 0) return;
-            try
-            {
-                foreach (var kv in _prismStock) PrismSet(kv.Key, kv.Value);
-            }
-            catch { }
-        }
+        private static Texture _dirtTexture;
+        private static bool _dirtChecked;
 
         // ================= Aiming field of view ==========================
         //

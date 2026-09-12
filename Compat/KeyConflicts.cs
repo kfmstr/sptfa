@@ -34,6 +34,54 @@ namespace SPTFreeAim.Compat
     {
         public static string Report = "not checked yet";
 
+        /// <summary>
+        /// Mod hotkey name -> what Tarkov also does with that key. Empty when
+        /// clean.
+        ///
+        /// This is the half that was missing. The check ran, it was right, it
+        /// printed in red on the HUD for weeks, and the code carried on acting on
+        /// the key regardless. A warning the user has to notice and act on, for a
+        /// condition the code can see perfectly well, is not a fix. F57.
+        /// </summary>
+        public static readonly Dictionary<string, string> Blocked =
+            new Dictionary<string, string>();
+
+        /// <summary>
+        /// True when this hotkey must be IGNORED because Tarkov owns the key too.
+        /// A key that does two things is not a hotkey, it is a trap, and the mod
+        /// is the one of the two that can stand down.
+        /// </summary>
+        public static bool IsBlocked(string name) { return Blocked.ContainsKey(name); }
+
+        public static string Why(string name)
+        {
+            string s;
+            return Blocked.TryGetValue(name, out s) ? s : null;
+        }
+
+        /// <summary>Every key name Tarkov has bound to something. Empty if unread.</summary>
+        private static readonly HashSet<string> GameKeys = new HashSet<string>();
+
+        public static bool IsGameKey(string keyName) { return GameKeys.Contains(keyName); }
+        public static bool Checked;
+
+        /// <summary>
+        /// A key Tarkov does not use and this mod is not already using.
+        /// Returns KeyCode.None if the whole list is taken.
+        /// </summary>
+        public static UnityEngine.KeyCode FirstFreeKey(
+            UnityEngine.KeyCode[] preferred, params UnityEngine.KeyCode[] alreadyOurs)
+        {
+            foreach (UnityEngine.KeyCode k in preferred)
+            {
+                if (GameKeys.Contains(k.ToString())) continue;
+                bool taken = false;
+                foreach (UnityEngine.KeyCode mine in alreadyOurs) if (mine == k) { taken = true; break; }
+                if (!taken) return k;
+            }
+            return UnityEngine.KeyCode.None;
+        }
+
         private static readonly string[] Candidates =
         {
             @"SPT_Runtime\user\sptSettings\Control.ini",
@@ -55,6 +103,11 @@ namespace SPTFreeAim.Compat
 
                 Dictionary<string, List<string>> gameKeys = ParseBindings(File.ReadAllText(path));
 
+                Blocked.Clear();
+                GameKeys.Clear();
+                foreach (string k in gameKeys.Keys) GameKeys.Add(k);
+                Checked = true;
+
                 var clashes = new List<string>();
                 foreach (var mine in ours)
                 {
@@ -64,8 +117,10 @@ namespace SPTFreeAim.Compat
                     List<string> actions;
                     if (!gameKeys.TryGetValue(key, out actions)) continue;
 
+                    string what = string.Join(", ", actions.ToArray());
+                    Blocked[mine.Key] = key + " is Tarkov's " + what;
                     clashes.Add(string.Format("\"{0}\" is on {1}, which Tarkov also uses for: {2}",
-                        mine.Key, key, string.Join(", ", actions.ToArray())));
+                        mine.Key, key, what));
                 }
 
                 if (clashes.Count == 0)
@@ -78,9 +133,10 @@ namespace SPTFreeAim.Compat
                 Report = clashes.Count + " clash(es) with Tarkov's bindings";
                 var sb = new StringBuilder();
                 sb.AppendLine("KEY CLASH - one of this mod's hotkeys is a key Tarkov already uses.");
-                sb.AppendLine("Pressing it will do BOTH things, every time:");
+                sb.AppendLine("These mod hotkeys are now IGNORED so the game's action is the only one:");
                 foreach (string c in clashes) sb.AppendLine("    " + c);
-                sb.Append("Change the mod's key in the F12 menu. See docs/07-FINDINGS.md F47.");
+                sb.Append("Pick a free key in the F12 menu and it starts working again. " +
+                          "See docs/07-FINDINGS.md F47 and F57.");
                 Plugin.Log.LogWarning(sb.ToString());
             }
             catch (Exception e)
