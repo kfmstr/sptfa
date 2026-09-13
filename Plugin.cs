@@ -25,7 +25,7 @@ namespace SPTFreeAim
     {
         public const string GUID = "kfmstr.sptfreeaim";
         public const string NAME = "SPT Free Aim";
-        public const string VERSION = "0.1.0";
+        public const string VERSION = "0.2.0";
 
         /// <summary>
         /// Stamped at compile time so the log can answer "is the game even
