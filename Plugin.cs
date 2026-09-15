@@ -25,7 +25,7 @@ namespace SPTFreeAim
     {
         public const string GUID = "kfmstr.sptfreeaim";
         public const string NAME = "SPT Free Aim";
-        public const string VERSION = "0.2.0";
+        public const string VERSION = "0.2.1";
 
         /// <summary>
         /// Stamped at compile time so the log can answer "is the game even
@@ -114,6 +114,7 @@ namespace SPTFreeAim
 
             FreeAimPatches.Apply(_harmony = new Harmony(GUID));
             RecoilPatch.Apply(_harmony);
+            Compat.OpticPiP.Apply(_harmony);
 
             // Two config files, neither able to see the other, is a collision no
             // amount of care inside either one can catch. So compare them. F47.
@@ -188,6 +189,12 @@ namespace SPTFreeAim
                 // The aim button carries a second gesture: tap for low ready,
                 // hold to aim. Both routes set the same flag, so the key and the
                 // tap are alternatives rather than rivals. F64.
+                // Before the tap, so a press that raises the weapon is not also
+                // read as a toggle back down. F66.
+                Stance.ReadAimRaises(
+                    Compat.GameRefs.GetIsAiming(FreeAimPatches.LocalPwa),
+                    Cfg.AimRaisesWeapon.Value);
+
                 Stance.ReadAimTap(Cfg.AimTapWindow.Value,
                     FreeAimPatches.LocalPlayer != null
                     && !Compat.GameRefs.Probe_InventoryOpen.Read(FreeAimPatches.LocalPlayer));
@@ -237,6 +244,7 @@ namespace SPTFreeAim
         public void OnLocalPlayerChanged()
         {
             FreeAimPatches.ForgetGuards();
+            FreeAimPatches.ForgetSight();
             ResetState();
             Log.LogInfo("Local player acquired. Free aim state reset.");
         }

@@ -205,6 +205,9 @@ namespace SPTFreeAim.Patches
         }
 
         /// <summary>Called when the local player changes, so no stale base survives a raid.</summary>
+        /// <summary>Drop anything cached against the old weapon or player.</summary>
+        public static void ForgetSight() { Compat.OpticPiP.Forget(); }
+
         public static void ForgetGuards()
         {
             GuardWeapon.Forget();
@@ -218,6 +221,7 @@ namespace SPTFreeAim.Patches
             FocusDepth.Release();
             OpticHousing.Release();
             Compat.OpticStack.Release();
+            Compat.OpticPiP.Release();
             LocalPlayer = null;
             LocalPwa = null;
             if (_harmony != null) _harmony.UnpatchSelf();
@@ -346,6 +350,17 @@ namespace SPTFreeAim.Patches
                 cfg.OpticVignette.Value = 0f;
                 cfg.OpticDistortion.Value = 0f;
                 Compat.OpticStack.Release();
+            }
+
+            try
+            {
+                Compat.OpticPiP.Drive(pwa, GameRefs.GetIsAiming(pwa), cfg.OpticIdleResolution.Value);
+            }
+            catch (Exception e)
+            {
+                Plugin.Log.LogError("Scope picture failed, switching it off: " + e);
+                cfg.OpticIdleResolution.Value = 0;
+                Compat.OpticPiP.Release();
             }
 
             try { ApplySightTransparency(p, pwa, cfg); }

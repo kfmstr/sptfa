@@ -61,6 +61,28 @@ namespace SPTFreeAim.Core
         }
 
         private float _rmbDownAt = -1f;
+        private bool _clearedByAim;
+
+        /// <summary>
+        /// Raising the sights from low ready brings the weapon up first.
+        ///
+        /// Without this, aiming while the weapon is down fights the stance pose:
+        /// the game runs its aim animation while the mod is still holding the
+        /// muzzle at the floor. The weapon should come up and keep going into the
+        /// shoulder, which is one flag, not an animation.
+        ///
+        /// It has to cooperate with the right-mouse tap, because both gestures
+        /// live on the same button. A tap at low ready would otherwise flip twice
+        /// - aim clears ready on the press, the tap sets it again on release - and
+        /// land back where it started, looking like a dead button. So a press that
+        /// cleared ready suppresses its own tap. F66.
+        /// </summary>
+        public void ReadAimRaises(bool isAiming, bool enabled)
+        {
+            if (!enabled || !isAiming || !UserWantsReady) return;
+            UserWantsReady = false;
+            _clearedByAim = true;
+        }
 
         /// <summary>Last right-mouse press duration, in seconds, for the HUD.</summary>
         public float LastRmbHeld;
@@ -91,16 +113,20 @@ namespace SPTFreeAim.Core
             if (!allowed) { _rmbDownAt = -1f; return; }
 
             if (UnityEngine.Input.GetMouseButtonDown(1))
+            {
                 _rmbDownAt = UnityEngine.Time.unscaledTime;
+                _clearedByAim = false;
+            }
 
             if (UnityEngine.Input.GetMouseButtonUp(1))
             {
                 if (_rmbDownAt >= 0f)
                 {
                     LastRmbHeld = UnityEngine.Time.unscaledTime - _rmbDownAt;
-                    if (LastRmbHeld <= window) UserWantsReady = !UserWantsReady;
+                    if (LastRmbHeld <= window && !_clearedByAim) UserWantsReady = !UserWantsReady;
                 }
                 _rmbDownAt = -1f;
+                _clearedByAim = false;
             }
         }
 

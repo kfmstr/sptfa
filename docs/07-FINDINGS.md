@@ -4574,3 +4574,118 @@ Three details that matter more than the gesture:
 
 The key route and the tap route set the same flag, so they are alternatives
 rather than rivals and neither has to know about the other.
+
+---
+
+## F65. Two switches black out a scope, and the game will flip both for you
+
+*"Can we turn the scopes picture in picture always on? instead of showing this
+black view when not aiming?"*
+
+Tarkov blacks a scope at the hip in two separate places:
+
+```
+OpticCameraManager.OnOpticSightDisabled:  Camera.gameObject.SetActive(false)
+OpticSight.OnDisable:                     LensFade(true)
+```
+
+The black disc is the fade. Behind it the camera's GameObject is deactivated, so
+nothing is rendering into the scope texture anyway - and because
+`OpticComponentUpdater` is a MonoBehaviour **on that same GameObject**, its
+`LateUpdate` stops too, so the camera would not even be tracking the scope if you
+only undid the fade.
+
+The obvious implementation is to undo all of it by hand: `SetActive(true)`,
+`LensFade(false)`, write `CurrentOpticSight`, hand the updater a pivot. Four
+internal writes that must stay in step with each other and with a state machine
+that is still running.
+
+The better one is one line:
+
+```csharp
+sight.enabled = true;      // OpticSight is a MonoBehaviour
+```
+
+`OpticSight.OnEnable` already does retrice, updater, camera activation and
+`LensFade(false)`, in the game's own order. Holding that switch makes the game
+re-enable its own scope natively. The build check asserts this file calls none of
+`SetActive`, `LensFade`, `set_CurrentOpticSight` or `OnOpticSightEnabled`.
+
+**Where a state machine exists, hold its input rather than reproducing its
+output.** Four findings in this project came from reimplementing something the
+game already did (F40's rotation, F36's depth of field, F54's post stack). This
+is the first time the cheaper move was obvious before the expensive one had been
+built.
+
+### What it costs, said before it was built
+
+A second camera rendering the whole scene every frame is the most expensive thing
+this mod can do, which is precisely why BSG gates it on aiming. Worse here: F56's
+HDR switch doubled that render target to ARGBHalf. And at the hip the scope is a
+thumbnail, so full resolution buys nothing.
+
+`Optic: scope picture when not aiming (px)` is therefore the resolution, not a
+bool. Zero is off; the value is what the scope renders at while the weapon is
+down, and shouldering always restores the player's own graphics setting.
+
+`SetResolution` destroys and rebuilds the render texture, so it is called **only
+on a genuine transition**, guarded by a comparison against the last applied
+value. Called unconditionally it would rebuild the scope's target sixty times a
+second, which is exactly the shape of F61.
+
+The HUD reports the live resolution and a count of how many times the game
+re-disabled the sight, so "is the game fighting us for this camera" is a number
+on screen rather than a thing I guessed at in advance.
+
+---
+
+## F66. Two gestures on one button, and the second one undid the first
+
+*"can you make it so, that if you try to aim while your gun is not ready, you
+jump into ready first and then straight into aim."*
+
+One flag: aiming while `UserWantsReady` clears it, and the weapon comes up and
+keeps going. Fifteen instructions.
+
+The interesting part is that it silently broke the feature added one message
+earlier. F64 put a low-ready toggle on a **tap** of the aim button. Now consider
+a tap taken at low ready:
+
+```
+press    -> the game starts aiming -> aim clears ready -> weapon comes up
+release  -> inside the tap window  -> tap toggles ready -> weapon goes back down
+```
+
+Two correct rules, each doing exactly what it says, composing into a button that
+does nothing. Neither rule is wrong on its own and neither could have been caught
+by testing it on its own.
+
+A press that cleared ready now suppresses its own tap, with the flag reset on
+every new press so the suppression cannot leak into the next gesture.
+
+**Two features that share an input are one feature.** The tap and the raise are
+both "what the right mouse button means", and the moment a second rule joined the
+first, the pair needed a decision about precedence that neither rule contained.
+The build check now asserts the coupling exists in the IL: `ReadAimRaises` must
+write the flag and `ReadAimTap` must read it.
+
+---
+
+## F70. Two switches black out a scope - holding one is not enough
+
+F65 held only `OpticSight.enabled`, on the reasoning that `OnEnable` re-runs
+`LensFade(false)` as a side effect. It does. But the pair is written together by
+`ProceduralWeaponAnimation.method_1`, which fires on aim, pose, FOV and
+point-of-view changes, so the glass can be repainted after the component has been
+re-enabled - a live camera rendering behind an opaque lens, which looks exactly
+like the feature doing nothing.
+
+Both switches have to be held:
+
+1. `sight.enabled = true` each frame (camera / updater / fade-clear via OnEnable)
+2. A Harmony prefix on `OpticSight.LensFade(bool)` that forces the argument to
+   `false` for the driven sight, so every caller - present and future - is covered
+   without depending on `method_1` keeping its obfuscated name
+
+The HUD's scope-picture row now reports the live lens fade value so "painted out"
+is visible instead of inferred.

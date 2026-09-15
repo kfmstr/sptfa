@@ -110,6 +110,10 @@ namespace SPTFreeAim.Debugging
                 Row("sight", Compat.OpticStack.HaveOpticCamera
                         ? "<color=#7fd1b9>" + Compat.OpticStack.SightKind + "</color>"
                         : "<color=#ffcc55>" + Compat.OpticStack.SightKind + "</color>") +
+                Row("scope picture", cfg.OpticIdleResolution.Value > 0
+                        ? string.Format("<color=#7fd1b9>{0}</color>   idle target {1} px",
+                              Compat.OpticPiP.Status, cfg.OpticIdleResolution.Value)
+                        : "off  (stock: black when not aiming)") +
                 Row("optic glass", cfg.OpticGlassActive
                         ? (Compat.OpticStack.Ready
                               ? string.Format("<color=#7fd1b9>bloom {0:F1}</color> over {1:F1} spread {2:F0} dirt {3:F1} fringe {4:F2} rim {5:F2} bow {6:F2}",
@@ -169,8 +173,8 @@ namespace SPTFreeAim.Debugging
             // Wider and taller than it looks like it needs: the optic glass row
             // now carries seven numbers plus the isolation report, and a clipped
             // HUD is a HUD you stop trusting. The sight row added one line.
-            GUI.Box(new Rect(10, 10, 800, 520), GUIContent.none, _boxStyle);
-            GUI.Label(new Rect(20, 18, 780, 504), "<b>SPT Free Aim</b>\n\n" + body, _style);
+            GUI.Box(new Rect(10, 10, 800, 540), GUIContent.none, _boxStyle);
+            GUI.Label(new Rect(20, 18, 780, 524), "<b>SPT Free Aim</b>\n\n" + body, _style);
         }
 
 

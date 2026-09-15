@@ -54,6 +54,7 @@ namespace SPTFreeAim
         public ConfigEntry<bool> StanceGateEnabled;
         public ConfigEntry<KeyboardShortcut> StanceKey;
         public ConfigEntry<float> AimTapWindow;
+        public ConfigEntry<bool> AimRaisesWeapon;
         public ConfigEntry<bool> StanceHoldToReady;
         public ConfigEntry<float> GateSpeed;
         public ConfigEntry<bool> LoweredPoseEnabled;
@@ -109,6 +110,7 @@ namespace SPTFreeAim
         public ConfigEntry<float> OpticFringe;
         public ConfigEntry<float> OpticVignette;
         public ConfigEntry<float> OpticDistortion;
+        public ConfigEntry<int> OpticIdleResolution;
 
         /// <summary>
         /// Any glass effect asked for at all. Same shape as the others: a value
@@ -329,6 +331,13 @@ namespace SPTFreeAim
             // -- stance --
             StanceGateEnabled = cfg.Bind(S_STANCE, "Gate on weapon ready", true,
                 "[docs/04-DECISIONS.md D6] Free aim only when the weapon is up. Off means always on.");
+            AimRaisesWeapon = cfg.Bind(S_STANCE, "Aiming raises the weapon first", true,
+                "Aim while the weapon is at low ready and it comes up and keeps going, straight " +
+                "into the shoulder, instead of fighting the low ready pose.\n" +
+                "\n" +
+                "Off, aiming from low ready does whatever the two poses do when they argue, which " +
+                "is usually the muzzle staying down while the game plays its aim animation.");
+
             AimTapWindow = cfg.Bind(S_STANCE, "Ready on a right-mouse tap (s)", 0.2f, new ConfigDescription(
                 "A quick TAP of the aim button drops the weapon to low ready, or brings it back up. " +
                 "HOLDING it aims exactly as it always did.\n" +
@@ -696,6 +705,23 @@ namespace SPTFreeAim
                 "This changes an internal iteration count, so move it in whole steps and do not " +
                 "sweep it while looking at something bright.",
                 new AcceptableValueRange<float>(1f, 10f)));
+
+            OpticIdleResolution = cfg.Bind(S_OPTIC, "Optic: scope picture when not aiming (px)", 0, new ConfigDescription(
+                "Keeps the scope showing the world instead of a black disc when the weapon is down.\n" +
+                "\n" +
+                "0 is OFF and is the stock behaviour: Tarkov deactivates the scope camera and fades " +
+                "the glass to black the moment you stop aiming.\n" +
+                "\n" +
+                "READ THIS BEFORE TURNING IT UP. The number is the scope's pixel size while you are " +
+                "NOT aiming, and that camera renders the whole scene a second time, every frame. " +
+                "Shouldered always goes back to your graphics settings' own value, so this only " +
+                "costs you at the hip - where the scope is a thumbnail on screen and does not need " +
+                "the pixels. 256 is cheap and looks right at that size. Going near your full optic " +
+                "resolution means paying for a second full render to fill a circle an inch wide.\n" +
+                "\n" +
+                "The HUD's 'scope picture' row shows the live resolution, whether the lens glass is " +
+                "clear or painted out, and whether the game is fighting us for the camera.",
+                new AcceptableValueRange<int>(0, 2048)));
 
             OpticForceHdr = cfg.Bind(S_OPTIC, "Optic: allow bright light in the scope", true,
                 "Leave this on unless the scope image starts looking wrong.\n" +

@@ -13,7 +13,7 @@
     <Nullable>disable</Nullable>
     <Authors>kfmstr</Authors>
     <Copyright></Copyright>
-    <AssemblyVersion>0.1.0</AssemblyVersion>
+    <AssemblyVersion>0.2.1</AssemblyVersion>
     <FileVersion>$(AssemblyVersion)</FileVersion>
     <Configurations>Debug;Release;Package</Configurations>
     <Version>$(AssemblyVersion)</Version>
